@@ -148,6 +148,36 @@ test("parseSecureCrtCommandLineTokens reports credential indices even when the p
   assert.deepEqual([...credentialIndices].sort((a, b) => a - b), [3]);
 });
 
+test("parseSecureCrtCommandLineTokens reports credential operands after a pre-credential parse failure", () => {
+  const { result, credentialIndices } = parseSecureCrtCommandLineTokens([
+    "Netcatty.exe",
+    "/SSH2",
+    "/P",
+    "99999",
+    "/PASSWORD",
+    "ssh://secret",
+    "real.example.com",
+  ]);
+  assert.equal(result, null);
+  // The invalid /P value fails the parse before /PASSWORD is visited, but the
+  // password operand must still be filtered from scheme-URL scanning (#3391).
+  assert.deepEqual([...credentialIndices].sort((a, b) => a - b), [5]);
+});
+
+test("parseSecureCrtCommandLineTokens reports /PASSPHRASE operands as credentials on failure", () => {
+  const { result, credentialIndices } = parseSecureCrtCommandLineTokens([
+    "Netcatty.exe",
+    "/SSH2",
+    "/PASSPHRASE",
+    "ssh://secret",
+    "/P",
+    "99999",
+    "10.0.0.8",
+  ]);
+  assert.equal(result, null);
+  assert.deepEqual([...credentialIndices].sort((a, b) => a - b), [3]);
+});
+
 test("parseSecureCrtCommandLineTokens returns null without a SecureCRT launch signal", () => {
   assert.equal(parseSecureCrtCommandLineTokens(["Netcatty.exe", "ssh://alice@example.com"]), null);
 });

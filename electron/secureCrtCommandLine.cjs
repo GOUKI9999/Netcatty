@@ -78,15 +78,34 @@ function hasSecureCrtLaunchSignal(argv) {
 }
 
 /**
+ * Collect argv indices holding `/PASSWORD` / `/PASSPHRASE` operand values.
+ * This is a plain scan (no state): credential operands must be identified even
+ * when semantic parsing later fails on an earlier or later flag (#3391), e.g.
+ * `/SSH2 /P 99999 /PASSWORD ssh://… host` never reaches `/PASSWORD` in the
+ * parse loop, yet its value is still a credential, never a scheme link.
+ */
+function findCredentialOperandIndices(argv) {
+  const indices = new Set();
+  for (let index = 0; index < argv.length; index += 1) {
+    const flag = normalizeFlag(argv[index]);
+    if (!PASSWORD_REDACT_FLAGS.has(flag)) continue;
+    const value = argv[index + 1];
+    if (typeof value === "string") indices.add(index + 1);
+  }
+  return indices;
+}
+
+/**
  * Parse a SecureCRT-style command line and also report which argv indices the
  * parse consumed (flags, their operand values and recognized positionals).
  * Callers use the indices to keep operand values out of scheme-URL scanning
  * (#3391): a `/PASSWORD ssh://…` value must never be treated as a deep link.
  * `result` is null when the line is not a recognizable SecureCRT launch. Full
  * `consumedIndices` should only be used for filtering on success, but
- * `credentialIndices` (username/password operand indices) stays valid on
- * failure: a credential operand consumed before the parse failed is still a
- * credential, never a standalone scheme link (#3391).
+ * `credentialIndices` (password/passphrase/username operand indices) is
+ * pre-scanned up front and stays valid on failure: a credential operand is
+ * still a credential even when the overall launch is malformed, never a
+ * standalone scheme link (#3391).
  */
 function parseSecureCrtCommandLineTokens(argv) {
   if (!Array.isArray(argv) || !hasSecureCrtLaunchSignal(argv)) return null;
@@ -97,7 +116,9 @@ function parseSecureCrtCommandLineTokens(argv) {
   let port;
   const positionals = [];
   const consumedIndices = new Set();
-  const credentialIndices = new Set();
+  // Password/passphrase operands are identified by a full pre-scan so they are
+  // filtered even when the parse fails before/after visiting the flag (#3391).
+  const credentialIndices = findCredentialOperandIndices(argv);
   const fail = () => ({ result: null, consumedIndices, credentialIndices });
 
   for (let index = 0; index < argv.length; index += 1) {
