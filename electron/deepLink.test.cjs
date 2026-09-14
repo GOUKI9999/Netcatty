@@ -92,6 +92,53 @@ test("collectSshDeepLinkQueueItems keeps PuTTY CLI launches when scheme URLs are
   );
 });
 
+test("collectPuttyStyleDeepLinkUrls converts SecureCRT-style argv", () => {
+  assert.deepEqual(
+    collectPuttyStyleDeepLinkUrls([
+      String.raw`C:\Program Files\Netcatty\Netcatty.exe`,
+      "/SSH2",
+      "/L",
+      "alice",
+      "/P",
+      "2222",
+      "/PASSWORD",
+      "s3cret",
+      "10.0.0.8",
+    ]),
+    { ssh: ["ssh://alice:s3cret@10.0.0.8:2222"], telnet: [] },
+  );
+});
+
+test("collectPuttyStyleDeepLinkUrls routes SecureCRT /TELNET to the telnet queue", () => {
+  assert.deepEqual(
+    collectPuttyStyleDeepLinkUrls([
+      "Netcatty.exe",
+      "/TELNET",
+      "old.example.com",
+      "/P",
+      "2323",
+    ]),
+    { ssh: [], telnet: ["telnet://old.example.com:2323"] },
+  );
+});
+
+test("collectSshDeepLinkQueueItems keeps SecureCRT CLI launches when scheme URLs are disabled", () => {
+  assert.deepEqual(
+    collectSshDeepLinkQueueItems([
+      "Netcatty.exe",
+      "/SSH2",
+      "/L",
+      "alice",
+      "/P",
+      "2222",
+      "/PASSWORD",
+      "s3cret",
+      "10.0.0.8",
+    ], { includeSchemeUrls: false }),
+    { ssh: [{ rawUrl: "ssh://alice:s3cret@10.0.0.8:2222", viaCommandLine: true }], telnet: [] },
+  );
+});
+
 test("collectSshDeepLinkQueueItems keeps scheme URL gating separate from CLI launches", () => {
   const queueItems = collectSshDeepLinkQueueItems(
     ["/Applications/Netcatty.app/Contents/MacOS/Netcatty", "ssh://alice@example.com"],

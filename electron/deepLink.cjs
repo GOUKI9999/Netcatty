@@ -4,6 +4,10 @@ const {
   parsePuttyCommandLine,
   redactPuttyCommandLinePasswords,
 } = require("./puttyCommandLine.cjs");
+const {
+  parseSecureCrtCommandLine,
+  redactSecureCrtCommandLinePasswords,
+} = require("./secureCrtCommandLine.cjs");
 
 const SSH_DEEP_LINK_CHANNEL = "netcatty:deepLink:ssh";
 const TELNET_DEEP_LINK_CHANNEL = "netcatty:deepLink:telnet";
@@ -57,7 +61,11 @@ function collectPuttyStyleDeepLinkUrls(argv) {
     return { ssh: [], telnet: [] };
   }
 
-  const parsed = parsePuttyCommandLine(argv);
+  // SecureCRT-style switches (/SSH2 /L user /P 22 /PASSWORD pass host) are
+  // tried first: bastion/4A launchers configured as "SecureCRT" emit them, and
+  // the flag sets are disjoint from PuTTY-style dashes, so trying SecureCRT
+  // first then falling back to PuTTY covers both callers (#3390, #3044).
+  const parsed = parseSecureCrtCommandLine(argv) ?? parsePuttyCommandLine(argv);
   if (!parsed?.url) return { ssh: [], telnet: [] };
   if (parsed.protocol === TELNET_PROTOCOL) {
     return { ssh: [], telnet: [parsed.url] };
@@ -441,6 +449,7 @@ module.exports = {
   collectSshDeepLinkUrls,
   collectTelnetDeepLinkUrls,
   redactPuttyCommandLinePasswords,
+  redactSecureCrtCommandLinePasswords,
   isJmsDeepLinkUrl,
   isSshDeepLinkUrl,
   isTelnetDeepLinkUrl,
