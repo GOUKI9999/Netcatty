@@ -263,6 +263,55 @@ test("listImages maps ssh exec timeouts to a docker daemon hint without retrying
   assert.equal(calls.length, 1);
 });
 
+test("listContainers keeps the SSH-specific error for exec channel-open timeouts", async () => {
+  const calls = [];
+  const dockerOps = createDockerOpsApi({
+    getSession: () => ({}),
+    execOnSession: async (_event, sessionId, command, timeoutMs) => {
+      calls.push({ command, timeoutMs });
+      return {
+        success: false,
+        stdout: "",
+        stderr: "",
+        error: "SSH exec channel open timed out after 30000 ms",
+        code: 1,
+      };
+    },
+  });
+
+  const result = await dockerOps.listContainers(null, "s1");
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /SSH exec channel open timed out/);
+  assert.doesNotMatch(result.error, /daemon may be stopped/i);
+  assert.equal(calls.length, 1);
+});
+
+test("listContainers maps an explicit timedOut result flag to the docker daemon hint", async () => {
+  const calls = [];
+  const dockerOps = createDockerOpsApi({
+    getSession: () => ({}),
+    execOnSession: async (_event, sessionId, command, timeoutMs) => {
+      calls.push({ command, timeoutMs });
+      return {
+        success: false,
+        stdout: "",
+        stderr: "",
+        error: "Command failed: ssh -o BatchMode=no docker ps\n",
+        timedOut: true,
+        code: 1,
+      };
+    },
+  });
+
+  const result = await dockerOps.listContainers(null, "s1");
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /Docker command timed out after 30000 ms/);
+  assert.match(result.error, /daemon may be stopped or unresponsive/i);
+  assert.equal(calls.length, 1);
+});
+
 test("docker image actions retry with sudo and send saved passwords through stdin", async () => {
   const calls = [];
   const dockerOps = createDockerOpsApi({

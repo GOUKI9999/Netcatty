@@ -29,9 +29,12 @@ function isSuccessfulCommandResult(result) {
 const DOCKER_LIST_TIMEOUT_MS = 30000;
 
 function isSshExecTimeoutResult(result) {
+  if (result?.timedOut === true) return true;
   const text = `${result?.error || ""}\n${result?.stderr || ""}`;
-  return text.includes("SSH command execution timed out")
-    || text.includes("SSH exec channel open timed out");
+  // Only command-execution timeouts mean docker never finished; the daemon
+  // hint is appropriate there. Channel-open timeouts are SSH transport
+  // failures and keep their specific error instead of the Docker hint.
+  return text.includes("SSH command execution timed out");
 }
 
 function buildDockerTimeoutError(timeoutMs) {

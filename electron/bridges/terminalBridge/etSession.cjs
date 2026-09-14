@@ -1121,6 +1121,10 @@ main();
             resolve({
               success: false,
               error: err.message,
+              // Node sets timedOut when execFile killed the ssh process because
+              // options.timeout elapsed; expose it so callers (e.g. dockerOps)
+              // can recognize subprocess timeouts without parsing messages.
+              timedOut: err?.timedOut === true,
               stdout: stdout || "",
               stderr: stderr || "",
               code: typeof err.code === "number" && err.code !== 0 ? err.code : 1,
