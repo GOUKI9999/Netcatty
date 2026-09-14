@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   parseSecureCrtCommandLine,
+  parseSecureCrtCommandLineTokens,
   redactSecureCrtCommandLinePasswords,
 } = require("./secureCrtCommandLine.cjs");
 
@@ -99,6 +100,39 @@ test("parseSecureCrtCommandLine rejects unsupported protocols and missing values
   assert.equal(parseSecureCrtCommandLine(["Netcatty.exe", "/SSH2", "/P", "99999"]), null);
   assert.equal(parseSecureCrtCommandLine(["Netcatty.exe", "/SSH2", "/PASSWORD", ""]), null);
   assert.equal(parseSecureCrtCommandLine(["Netcatty.exe", "-ssh", "user@host", "-pw", "x"]), null);
+});
+
+test("parseSecureCrtCommandLineTokens reports consumed operand indices", () => {
+  const { result, consumedIndices } = parseSecureCrtCommandLineTokens([
+    "Netcatty.exe",
+    "/SSH2",
+    "/L",
+    "alice",
+    "/PASSWORD",
+    "ssh://s3cret",
+    "10.0.0.8",
+  ]);
+  assert.equal(result?.url, "ssh://alice:ssh%3A%2F%2Fs3cret@10.0.0.8");
+  // Every token is an operand of the command line, including the password
+  // value that merely starts with a scheme (#3391).
+  assert.deepEqual([...consumedIndices].sort((a, b) => a - b), [0, 1, 2, 3, 4, 5, 6]);
+});
+
+test("parseSecureCrtCommandLineTokens returns consumed indices with a null result on failure", () => {
+  const { result, consumedIndices } = parseSecureCrtCommandLineTokens([
+    "Netcatty.exe",
+    "/SSH2",
+    "/PASSWORD",
+    "ssh://s3cret",
+    "/SERIAL",
+    "com1",
+  ]);
+  assert.equal(result, null);
+  assert.deepEqual([...consumedIndices].sort((a, b) => a - b), [0, 1, 2, 3]);
+});
+
+test("parseSecureCrtCommandLineTokens returns null without a SecureCRT launch signal", () => {
+  assert.equal(parseSecureCrtCommandLineTokens(["Netcatty.exe", "ssh://alice@example.com"]), null);
 });
 
 test("redactSecureCrtCommandLinePasswords masks /PASSWORD and /PASSPHRASE values", () => {

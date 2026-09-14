@@ -77,7 +77,15 @@ function hasSecureCrtLaunchSignal(argv) {
   });
 }
 
-function parseSecureCrtCommandLine(argv) {
+/**
+ * Parse a SecureCRT-style command line and also report which argv indices the
+ * parse consumed (flags, their operand values and recognized positionals).
+ * Callers use the indices to keep operand values out of scheme-URL scanning
+ * (#3391): a `/PASSWORD ssh://…` value must never be treated as a deep link.
+ * `result` is null when the line is not a recognizable SecureCRT launch, in
+ * which case consumed indices should not be used for filtering.
+ */
+function parseSecureCrtCommandLineTokens(argv) {
   if (!Array.isArray(argv) || !hasSecureCrtLaunchSignal(argv)) return null;
 
   let protocol = SSH_PROTOCOL;
@@ -85,54 +93,68 @@ function parseSecureCrtCommandLine(argv) {
   let password;
   let port;
   const positionals = [];
+  const consumedIndices = new Set();
+  const fail = () => ({ result: null, consumedIndices });
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (typeof arg !== "string" || !arg) continue;
     const flag = normalizeFlag(arg);
 
-    if (UNSUPPORTED_PROTOCOL_FLAGS.has(flag)) return null;
+    if (UNSUPPORTED_PROTOCOL_FLAGS.has(flag)) return fail();
 
     const protocolFromFlag = PROTOCOL_FLAGS.get(flag);
     if (protocolFromFlag) {
       protocol = protocolFromFlag;
+      consumedIndices.add(index);
       continue;
     }
 
-    if (SKIP_FLAGS.has(flag)) continue;
+    if (SKIP_FLAGS.has(flag)) {
+      consumedIndices.add(index);
+      continue;
+    }
 
     if (VALUE_FLAGS.has(flag)) {
       const value = argv[index + 1];
-      if (typeof value !== "string") return null;
+      if (typeof value !== "string") return fail();
+      consumedIndices.add(index);
+      consumedIndices.add(index + 1);
       index += 1;
       if (PORT_FLAGS.has(flag)) {
         const parsedPort = parsePort(value);
-        if (parsedPort === null) return null;
+        if (parsedPort === null) return fail();
         port = parsedPort;
         continue;
       }
       if (USERNAME_FLAGS.has(flag)) {
         const nextUser = value.trim();
-        if (!nextUser) return null;
+        if (!nextUser) return fail();
         username = nextUser;
         continue;
       }
       if (PASSWORD_FLAGS.has(flag)) {
-        if (value === "") return null;
+        if (value === "") return fail();
         password = value;
         continue;
       }
-      if (!IGNORED_VALUE_FLAGS.has(flag) || !value.trim()) return null;
+      if (!IGNORED_VALUE_FLAGS.has(flag) || !value.trim()) return fail();
       continue;
     }
 
-    if (isElectronNoiseArg(arg, index, argv)) continue;
+    if (isElectronNoiseArg(arg, index, argv)) {
+      consumedIndices.add(index);
+      continue;
+    }
 
     const spec = parseHostSpec(arg);
-    if (spec) positionals.push(spec);
+    if (spec) {
+      positionals.push(spec);
+      consumedIndices.add(index);
+    }
   }
 
-  if (positionals.length === 0) return null;
+  if (positionals.length === 0) return fail();
 
   const hostSpec = positionals.reduce((best, candidate) => (
     hostCandidateScore(candidate) > hostCandidateScore(best) ? candidate : best
@@ -141,7 +163,7 @@ function parseSecureCrtCommandLine(argv) {
   const resolvedUsername = (username || hostSpec.username || "").trim() || undefined;
   const resolvedPort = port ?? hostSpec.port;
   const hostname = hostSpec.hostname;
-  if (!hostname) return null;
+  if (!hostname) return fail();
 
   const url = toDeepLinkUrl({
     protocol,
@@ -152,13 +174,20 @@ function parseSecureCrtCommandLine(argv) {
   });
 
   return {
-    protocol,
-    url,
-    hostname,
-    ...(resolvedUsername ? { username: resolvedUsername } : {}),
-    ...(password !== undefined ? { password } : {}),
-    ...(resolvedPort ? { port: resolvedPort } : {}),
+    result: {
+      protocol,
+      url,
+      hostname,
+      ...(resolvedUsername ? { username: resolvedUsername } : {}),
+      ...(password !== undefined ? { password } : {}),
+      ...(resolvedPort ? { port: resolvedPort } : {}),
+    },
+    consumedIndices,
   };
+}
+
+function parseSecureCrtCommandLine(argv) {
+  return parseSecureCrtCommandLineTokens(argv)?.result ?? null;
 }
 
 function redactSecureCrtCommandLinePasswords(argv) {
@@ -175,5 +204,6 @@ function redactSecureCrtCommandLinePasswords(argv) {
 
 module.exports = {
   parseSecureCrtCommandLine,
+  parseSecureCrtCommandLineTokens,
   redactSecureCrtCommandLinePasswords,
 };

@@ -6,6 +6,7 @@ const {
 } = require("./puttyCommandLine.cjs");
 const {
   parseSecureCrtCommandLine,
+  parseSecureCrtCommandLineTokens,
   redactSecureCrtCommandLinePasswords,
 } = require("./secureCrtCommandLine.cjs");
 
@@ -23,9 +24,26 @@ function isDeepLinkUrl(rawUrl, protocol) {
   return rawUrl.trim().toLowerCase().startsWith(`${protocol}://`);
 }
 
-function collectDeepLinkUrls(argv, protocol) {
+/**
+ * Drop argv tokens that a recognized SecureCRT-style command line consumed as
+ * operands (#3391). A `/PASSWORD ssh://…` value starts with a scheme but is a
+ * password, not a deep link; without this filter the scheme-token scan queues
+ * it as a standalone link (or drops the whole CLI launch when scheme handling
+ * is disabled) and Netcatty connects to the wrong host. Only a *successful*
+ * SecureCRT parse filters tokens: unparseable argv keeps the previous
+ * scan-everything behavior so genuine scheme links are never lost.
+ */
+function collectSchemeUrlCandidates(argv) {
   if (!Array.isArray(argv)) return [];
-  return argv.filter((rawUrl) => isDeepLinkUrl(rawUrl, protocol));
+  const tokens = parseSecureCrtCommandLineTokens(argv);
+  if (!tokens?.result || !(tokens.consumedIndices instanceof Set) || tokens.consumedIndices.size === 0) {
+    return argv;
+  }
+  return argv.filter((_, index) => !tokens.consumedIndices.has(index));
+}
+
+function collectDeepLinkUrls(argv, protocol) {
+  return collectSchemeUrlCandidates(argv).filter((rawUrl) => isDeepLinkUrl(rawUrl, protocol));
 }
 
 function isSshDeepLinkUrl(rawUrl) {

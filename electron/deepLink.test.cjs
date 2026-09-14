@@ -139,6 +139,59 @@ test("collectSshDeepLinkQueueItems keeps SecureCRT CLI launches when scheme URLs
   );
 });
 
+test("collectPuttyStyleDeepLinkUrls connects SecureCRT launches whose password looks like a scheme URL", () => {
+  // (#3391) A /PASSWORD value starting with ssh:// must never win the
+  // scheme-token early return: the whole CLI launch would be dropped.
+  assert.deepEqual(
+    collectPuttyStyleDeepLinkUrls([
+      "Netcatty.exe",
+      "/SSH2",
+      "/L",
+      "alice",
+      "/PASSWORD",
+      "ssh://s3cret",
+      "10.0.0.8",
+    ]),
+    { ssh: ["ssh://alice:ssh%3A%2F%2Fs3cret@10.0.0.8"], telnet: [] },
+  );
+});
+
+test("collectSshDeepLinkQueueItems does not queue SecureCRT password values as scheme links", () => {
+  // (#3391) With scheme handling enabled, the password operand must not be
+  // queued as a standalone ssh:// link to host "s3cret".
+  assert.deepEqual(
+    collectSshDeepLinkQueueItems([
+      "Netcatty.exe",
+      "/SSH2",
+      "/L",
+      "alice",
+      "/PASSWORD",
+      "ssh://s3cret",
+      "10.0.0.8",
+    ], { includeSchemeUrls: true }),
+    { ssh: [{ rawUrl: "ssh://alice:ssh%3A%2F%2Fs3cret@10.0.0.8", viaCommandLine: true }], telnet: [] },
+  );
+});
+
+test("collectSshDeepLinkQueueItems does not double-queue tokens a SecureCRT parse consumed", () => {
+  // A scheme-shaped positional is part of the command line (host spec), so it
+  // must not also be queued as a standalone scheme link.
+  assert.deepEqual(
+    collectSshDeepLinkQueueItems([
+      "Netcatty.exe",
+      "/SSH2",
+      "/PASSWORD",
+      "s3cret",
+      "10.0.0.8",
+      "ssh://bob@example.com",
+    ], { includeSchemeUrls: true }),
+    // parseHostSpec treats "ssh://bob@example.com" as user "ssh://bob" (the
+    // pre-existing best-host-score behavior); the point is it is not also
+    // queued as a standalone scheme link.
+    { ssh: [{ rawUrl: "ssh://ssh%3A%2F%2Fbob:s3cret@example.com", viaCommandLine: true }], telnet: [] },
+  );
+});
+
 test("collectSshDeepLinkQueueItems keeps scheme URL gating separate from CLI launches", () => {
   const queueItems = collectSshDeepLinkQueueItems(
     ["/Applications/Netcatty.app/Contents/MacOS/Netcatty", "ssh://alice@example.com"],
