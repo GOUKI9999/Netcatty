@@ -23,6 +23,21 @@ function isSuccessfulCommandResult(result) {
   return result?.success && (result.code === 0 || result.code === null || result.code === undefined);
 }
 
+// Docker list commands on a slow host (lazy daemon, snap docker, many images,
+// slow SSH link) can legitimately take longer than the previous fixed 12 s
+// window, so the lists get more headroom (#3387).
+const DOCKER_LIST_TIMEOUT_MS = 30000;
+
+function isSshExecTimeoutResult(result) {
+  const text = `${result?.error || ""}\n${result?.stderr || ""}`;
+  return text.includes("SSH command execution timed out")
+    || text.includes("SSH exec channel open timed out");
+}
+
+function buildDockerTimeoutError(timeoutMs) {
+  return `Docker command timed out after ${timeoutMs} ms; the Docker daemon may be stopped or unresponsive on the remote host`;
+}
+
 function dockerCommandError(result, fallback) {
   return (result?.stderr || result?.error || "").trim() || fallback;
 }
@@ -173,6 +188,14 @@ function createDockerOpsApi({ execOnSession, getSession }) {
     const result = await execOnSession(event, sessionId, cmd, timeoutMs);
     if (isSuccessfulCommandResult(result)) return result;
 
+    if (isSshExecTimeoutResult(result)) {
+      return {
+        success: false,
+        error: buildDockerTimeoutError(timeoutMs),
+        stderr: result?.stderr,
+      };
+    }
+
     if (isDockerSocketPermissionError(result)) {
       const sudoPassword = getSessionSudoPassword(getSession?.(sessionId));
       let lastSudoResult = null;
@@ -217,13 +240,13 @@ function createDockerOpsApi({ execOnSession, getSession }) {
   }
 
   async function listContainers(event, sessionId) {
-    const result = await runDocker(event, sessionId, "ps -a --format '{{json .}}'", 12000);
+    const result = await runDocker(event, sessionId, "ps -a --format '{{json .}}'", DOCKER_LIST_TIMEOUT_MS);
     if (!result.success) return { success: false, error: result.error };
     return { success: true, containers: parseDockerContainers(result.stdout) };
   }
 
   async function listImages(event, sessionId) {
-    const result = await runDocker(event, sessionId, "images --format '{{json .}}'", 12000);
+    const result = await runDocker(event, sessionId, "images --format '{{json .}}'", DOCKER_LIST_TIMEOUT_MS);
     if (!result.success) return { success: false, error: result.error };
     return { success: true, images: parseDockerImages(result.stdout) };
   }

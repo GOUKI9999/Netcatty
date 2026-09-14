@@ -192,6 +192,77 @@ test("listContainers retries with explicit sudo autofill password on mosh or et 
   assert.deepEqual(calls[2].execOptions, { stdin: "saved-secret\n" });
 });
 
+test("listContainers and listImages allow 30s for slow docker daemons", async () => {
+  const calls = [];
+  const dockerOps = createDockerOpsApi({
+    getSession: () => ({}),
+    execOnSession: async (_event, sessionId, command, timeoutMs) => {
+      calls.push({ command, timeoutMs });
+      return {
+        success: true,
+        stdout: '{"ID":"abc123","Names":"web","Image":"nginx","State":"running"}\n',
+        stderr: "",
+        code: 0,
+      };
+    },
+  });
+
+  await dockerOps.listContainers(null, "s1");
+  await dockerOps.listImages(null, "s1");
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].timeoutMs, 30000);
+  assert.equal(calls[1].timeoutMs, 30000);
+});
+
+test("listContainers maps ssh exec timeouts to a docker daemon hint without retrying", async () => {
+  const calls = [];
+  const dockerOps = createDockerOpsApi({
+    getSession: () => ({ systemManagerSudoPassword: "host-secret" }),
+    execOnSession: async (_event, sessionId, command, timeoutMs) => {
+      calls.push({ command, timeoutMs });
+      return {
+        success: false,
+        stdout: "",
+        stderr: "",
+        error: "SSH command execution timed out after 30000 ms",
+        code: 1,
+      };
+    },
+  });
+
+  const result = await dockerOps.listContainers(null, "s1");
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /Docker command timed out after 30000 ms/);
+  assert.match(result.error, /daemon may be stopped or unresponsive/i);
+  assert.equal(calls.length, 1);
+});
+
+test("listImages maps ssh exec timeouts to a docker daemon hint without retrying", async () => {
+  const calls = [];
+  const dockerOps = createDockerOpsApi({
+    getSession: () => ({}),
+    execOnSession: async (_event, sessionId, command, timeoutMs) => {
+      calls.push({ command, timeoutMs });
+      return {
+        success: false,
+        stdout: "",
+        stderr: "",
+        error: "SSH command execution timed out after 30000 ms",
+        code: 1,
+      };
+    },
+  });
+
+  const result = await dockerOps.listImages(null, "s1");
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /Docker command timed out after 30000 ms/);
+  assert.match(result.error, /daemon may be stopped or unresponsive/i);
+  assert.equal(calls.length, 1);
+});
+
 test("docker image actions retry with sudo and send saved passwords through stdin", async () => {
   const calls = [];
   const dockerOps = createDockerOpsApi({
