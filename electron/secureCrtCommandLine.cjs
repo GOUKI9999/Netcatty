@@ -82,8 +82,11 @@ function hasSecureCrtLaunchSignal(argv) {
  * parse consumed (flags, their operand values and recognized positionals).
  * Callers use the indices to keep operand values out of scheme-URL scanning
  * (#3391): a `/PASSWORD ssh://…` value must never be treated as a deep link.
- * `result` is null when the line is not a recognizable SecureCRT launch, in
- * which case consumed indices should not be used for filtering.
+ * `result` is null when the line is not a recognizable SecureCRT launch. Full
+ * `consumedIndices` should only be used for filtering on success, but
+ * `credentialIndices` (username/password operand indices) stays valid on
+ * failure: a credential operand consumed before the parse failed is still a
+ * credential, never a standalone scheme link (#3391).
  */
 function parseSecureCrtCommandLineTokens(argv) {
   if (!Array.isArray(argv) || !hasSecureCrtLaunchSignal(argv)) return null;
@@ -94,7 +97,8 @@ function parseSecureCrtCommandLineTokens(argv) {
   let port;
   const positionals = [];
   const consumedIndices = new Set();
-  const fail = () => ({ result: null, consumedIndices });
+  const credentialIndices = new Set();
+  const fail = () => ({ result: null, consumedIndices, credentialIndices });
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -128,12 +132,15 @@ function parseSecureCrtCommandLineTokens(argv) {
         continue;
       }
       if (USERNAME_FLAGS.has(flag)) {
+        // `index` now points at the operand value (it was advanced above).
+        credentialIndices.add(index);
         const nextUser = value.trim();
         if (!nextUser) return fail();
         username = nextUser;
         continue;
       }
       if (PASSWORD_FLAGS.has(flag)) {
+        credentialIndices.add(index);
         if (value === "") return fail();
         password = value;
         continue;
@@ -183,6 +190,7 @@ function parseSecureCrtCommandLineTokens(argv) {
       ...(resolvedPort ? { port: resolvedPort } : {}),
     },
     consumedIndices,
+    credentialIndices,
   };
 }
 

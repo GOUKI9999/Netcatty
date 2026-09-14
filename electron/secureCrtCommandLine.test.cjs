@@ -131,6 +131,23 @@ test("parseSecureCrtCommandLineTokens returns consumed indices with a null resul
   assert.deepEqual([...consumedIndices].sort((a, b) => a - b), [0, 1, 2, 3]);
 });
 
+test("parseSecureCrtCommandLineTokens reports credential indices even when the parse fails", () => {
+  const { result, consumedIndices, credentialIndices } = parseSecureCrtCommandLineTokens([
+    "Netcatty.exe",
+    "/SSH2",
+    "/PASSWORD",
+    "ssh://s3cret",
+    "/P",
+    "99999",
+    "10.0.0.8",
+  ]);
+  assert.equal(result, null);
+  // The parse fails on the invalid port, so the host positional was never
+  // consumed, but the password operand is still reported as a credential (#3391).
+  assert.deepEqual([...consumedIndices].sort((a, b) => a - b), [0, 1, 2, 3, 4, 5]);
+  assert.deepEqual([...credentialIndices].sort((a, b) => a - b), [3]);
+});
+
 test("parseSecureCrtCommandLineTokens returns null without a SecureCRT launch signal", () => {
   assert.equal(parseSecureCrtCommandLineTokens(["Netcatty.exe", "ssh://alice@example.com"]), null);
 });

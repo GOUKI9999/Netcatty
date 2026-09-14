@@ -29,17 +29,26 @@ function isDeepLinkUrl(rawUrl, protocol) {
  * operands (#3391). A `/PASSWORD ssh://…` value starts with a scheme but is a
  * password, not a deep link; without this filter the scheme-token scan queues
  * it as a standalone link (or drops the whole CLI launch when scheme handling
- * is disabled) and Netcatty connects to the wrong host. Only a *successful*
- * SecureCRT parse filters tokens: unparseable argv keeps the previous
- * scan-everything behavior so genuine scheme links are never lost.
+ * is disabled) and Netcatty connects to the wrong host. A *successful*
+ * SecureCRT parse filters every token it consumed. On a failed parse the full
+ * consumed set is unusable (genuine scheme links must keep the previous
+ * scan-everything behavior), but credential operands are still filtered: an
+ * index the parser consumed as a username/password value is a credential even
+ * when the overall launch is malformed, never a standalone scheme link.
  */
 function collectSchemeUrlCandidates(argv) {
   if (!Array.isArray(argv)) return [];
   const tokens = parseSecureCrtCommandLineTokens(argv);
-  if (!tokens?.result || !(tokens.consumedIndices instanceof Set) || tokens.consumedIndices.size === 0) {
-    return argv;
+  if (!tokens) return argv;
+  const filterIndices = new Set();
+  if (tokens.credentialIndices instanceof Set) {
+    for (const index of tokens.credentialIndices) filterIndices.add(index);
   }
-  return argv.filter((_, index) => !tokens.consumedIndices.has(index));
+  if (tokens.result && tokens.consumedIndices instanceof Set) {
+    for (const index of tokens.consumedIndices) filterIndices.add(index);
+  }
+  if (filterIndices.size === 0) return argv;
+  return argv.filter((_, index) => !filterIndices.has(index));
 }
 
 function collectDeepLinkUrls(argv, protocol) {

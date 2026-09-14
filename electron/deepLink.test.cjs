@@ -173,6 +173,42 @@ test("collectSshDeepLinkQueueItems does not queue SecureCRT password values as s
   );
 });
 
+test("collectSshDeepLinkQueueItems filters password operands even when the SecureCRT parse fails", () => {
+  // (#3391) `/P 99999` makes the launch unparseable, but the /PASSWORD value
+  // was already consumed as a credential: it must not be queued as a
+  // standalone ssh:// link to host "s3cret".
+  assert.deepEqual(
+    collectSshDeepLinkQueueItems([
+      "Netcatty.exe",
+      "/SSH2",
+      "/PASSWORD",
+      "ssh://s3cret",
+      "/P",
+      "99999",
+      "10.0.0.8",
+    ], { includeSchemeUrls: true }),
+    { ssh: [], telnet: [] },
+  );
+});
+
+test("collectSshDeepLinkQueueItems keeps genuine scheme links alongside a failed SecureCRT parse", () => {
+  // A failed parse must only filter credential operands, not every consumed
+  // index, so genuine scheme links in the same argv still queue.
+  assert.deepEqual(
+    collectSshDeepLinkQueueItems([
+      "Netcatty.exe",
+      "/SSH2",
+      "/PASSWORD",
+      "s3cret",
+      "/P",
+      "99999",
+      "10.0.0.8",
+      "ssh://bob@example.com",
+    ], { includeSchemeUrls: true }),
+    { ssh: [{ rawUrl: "ssh://bob@example.com", viaCommandLine: false }], telnet: [] },
+  );
+});
+
 test("collectSshDeepLinkQueueItems does not double-queue tokens a SecureCRT parse consumed", () => {
   // A scheme-shaped positional is part of the command line (host spec), so it
   // must not also be queued as a standalone scheme link.
