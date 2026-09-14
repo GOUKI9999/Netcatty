@@ -200,6 +200,12 @@ function createDockerOpsApi({ execOnSession, getSession }) {
       const sudoPassword = getSessionSudoPassword(getSession?.(sessionId));
       let lastSudoResult = null;
 
+      const sudoTimeoutResult = () => ({
+        success: false,
+        error: buildDockerTimeoutError(timeoutMs),
+        stderr: lastSudoResult?.stderr,
+      });
+
       const nopasswdResult = await execOnSession(
         event,
         sessionId,
@@ -208,6 +214,7 @@ function createDockerOpsApi({ execOnSession, getSession }) {
       );
       if (isSuccessfulCommandResult(nopasswdResult)) return nopasswdResult;
       lastSudoResult = nopasswdResult;
+      if (isSshExecTimeoutResult(nopasswdResult)) return sudoTimeoutResult();
 
       if (sudoPassword) {
         const sudoResult = await execOnSession(
@@ -219,6 +226,7 @@ function createDockerOpsApi({ execOnSession, getSession }) {
         );
         if (isSuccessfulCommandResult(sudoResult)) return sudoResult;
         lastSudoResult = sudoResult;
+        if (isSshExecTimeoutResult(sudoResult)) return sudoTimeoutResult();
       }
 
       return {
