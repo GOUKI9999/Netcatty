@@ -78,17 +78,21 @@ function hasSecureCrtLaunchSignal(argv) {
 }
 
 /**
- * Collect argv indices holding `/PASSWORD` / `/PASSPHRASE` operand values.
+ * Collect argv indices holding `/PASSWORD` / `/PASSPHRASE` / `/L` operand
+ * values.
  * This is a plain scan (no state): credential operands must be identified even
  * when semantic parsing later fails on an earlier or later flag (#3391), e.g.
  * `/SSH2 /P 99999 /PASSWORD ssh://… host` never reaches `/PASSWORD` in the
- * parse loop, yet its value is still a credential, never a scheme link.
+ * parse loop, yet its value is still a credential, never a scheme link. `/L`
+ * operands are included for the same reason: `/SSH2 /P 99999 /L ssh://alice
+ * real.example.com` fails on the invalid port before `/L` is visited, but
+ * `ssh://alice` is a username, never a standalone scheme link.
  */
 function findCredentialOperandIndices(argv) {
   const indices = new Set();
   for (let index = 0; index < argv.length; index += 1) {
     const flag = normalizeFlag(argv[index]);
-    if (!PASSWORD_REDACT_FLAGS.has(flag)) continue;
+    if (!PASSWORD_REDACT_FLAGS.has(flag) && !USERNAME_FLAGS.has(flag)) continue;
     const value = argv[index + 1];
     if (typeof value === "string") indices.add(index + 1);
   }
@@ -116,8 +120,9 @@ function parseSecureCrtCommandLineTokens(argv) {
   let port;
   const positionals = [];
   const consumedIndices = new Set();
-  // Password/passphrase operands are identified by a full pre-scan so they are
-  // filtered even when the parse fails before/after visiting the flag (#3391).
+  // Password/passphrase/username operands are identified by a full pre-scan so
+  // they are filtered even when the parse fails before/after visiting the flag
+  // (#3391).
   const credentialIndices = findCredentialOperandIndices(argv);
   const fail = () => ({ result: null, consumedIndices, credentialIndices });
 
