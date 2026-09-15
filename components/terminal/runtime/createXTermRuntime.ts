@@ -1,4 +1,5 @@
 import { stringCellWidth } from "../autocomplete/terminalStringCellWidth";
+import type { TerminalBroadcastInputOptions } from "../terminalHelpers";
 import { FitAddon } from "@xterm/addon-fit";
 import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
@@ -315,7 +316,7 @@ export type CreateXTermRuntimeContext = {
     ((
       data: string,
       sourceSessionId: string,
-      options?: { kittyKeyboardInput?: KittyKeyboardBroadcastInput },
+      options?: TerminalBroadcastInputOptions,
     ) => void) | undefined
   >;
 
@@ -927,13 +928,16 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
   const appLevelActions = getAppLevelActions();
   const terminalActions = getTerminalPassthroughActions();
-  const broadcastUserPasteData = (data: string) => {
+  const broadcastUserPasteData = (
+    data: string,
+    options?: TerminalBroadcastInputOptions,
+  ) => {
     if (
       ctx.passwordPromptActiveRef?.current !== true
       && ctx.isBroadcastEnabledRef.current
       && ctx.onBroadcastInputRef.current
     ) {
-      ctx.onBroadcastInputRef.current(data, ctx.sessionId);
+      ctx.onBroadcastInputRef.current(data, ctx.sessionId, options);
       return true;
     }
     return false;
