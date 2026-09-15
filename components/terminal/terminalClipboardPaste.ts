@@ -74,6 +74,83 @@ type TerminalClipboardPasteOptions = {
   term: Pick<XTerm, "paste" | "scrollToBottom"> & Partial<Pick<XTerm, "focus">>;
 };
 
+type MultilineGatedPasteOptions = {
+  confirmMultilinePaste?: MultilinePasteConfirmGate;
+  isSensitiveInput?: () => boolean;
+  onPasteData?: (data: string, options?: { lineDelayMs?: number }) => boolean | void;
+  scrollOnPaste?: boolean;
+  scrollToBottomAfterProgrammaticInput?: (data: string) => void;
+  sessionId: string | null | undefined;
+  terminalBackend: {
+    writeToSession: (sessionId: string, data: string, options?: { automated?: boolean; sensitive?: boolean; lineDelayMs?: number }) => void;
+  };
+  term: Pick<XTerm, "paste" | "scrollToBottom"> & Partial<Pick<XTerm, "focus">>;
+};
+
+/**
+ * Paste `text` into the terminal, routing through the multi-line paste
+ * confirmation dialog when enabled (#3398). Shared by clipboard paste,
+ * the context-menu Paste Selection action and the pasteSelection shortcut
+ * so every user-initiated paste path honors the same review gate.
+ */
+export async function pasteTextWithMultilineConfirm(
+  text: string,
+  {
+    confirmMultilinePaste,
+    isSensitiveInput,
+    onPasteData,
+    scrollOnPaste = false,
+    scrollToBottomAfterProgrammaticInput,
+    sessionId,
+    terminalBackend,
+    term,
+  }: MultilineGatedPasteOptions,
+): Promise<void> {
+  if (!sessionId) return;
+  const session: string = sessionId;
+  // Multi-line paste confirmation (#3398): network-device CLIs (Cisco IOS,
+  // Huawei VRP, H3C Comware) execute every pasted line immediately and have
+  // no bracketed-paste protection, so let the user review before sending.
+  // Applied to non-empty text and whitespace-only text alike, so a blank
+  // multi-line clipboard cannot silently submit Enter presses at a prompt.
+  if (
+    confirmMultilinePaste?.enabled
+    && shouldConfirmMultilinePaste(text, { minLines: confirmMultilinePaste.minLines })
+  ) {
+    const decision = confirmMultilinePaste.requestConfirm
+      ? await confirmMultilinePaste.requestConfirm({ ...getMultilinePasteInfo(text), text })
+      : null;
+    if (!decision || decision.action === "cancel") return;
+    if (decision.action === "line-by-line") {
+      // An explicitly emptied preview means "send nothing"; only a missing
+      // value falls back to the original clipboard text.
+      const lineData = withFinalLineTerminator(normalizeLineEndings(decision.text ?? text));
+      if (!lineData) return;
+      terminalBackend.writeToSession(session, lineData, {
+        automated: true,
+        lineDelayMs: AUTO_RUN_SNIPPET_LINE_DELAY_MS,
+        sensitive: isSensitiveInput?.() === true,
+      });
+      // Broadcast mode: peers must mirror the confirmed lines too. The
+      // broadcast targets exclude the source session, so this does not
+      // double-send to the active session.
+      onPasteData?.(lineData, { lineDelayMs: AUTO_RUN_SNIPPET_LINE_DELAY_MS });
+      scrollToBottomAfterProgrammaticInput?.(lineData);
+      term.focus?.();
+      return;
+    }
+    pasteTextIntoTerminal(term, decision.text ?? text, {
+      scrollOnPaste,
+      onPasteData,
+    });
+    return;
+  }
+  pasteTextIntoTerminal(term, text, {
+    scrollOnPaste,
+    onPasteData,
+  });
+}
+
 export async function handleTerminalClipboardPaste({
   bridge,
   autoUploadClipboardImage = false,
@@ -152,55 +229,20 @@ export async function handleTerminalClipboardPaste({
     // empty so local image probe can still forward Ctrl+V.
     logger.warn("Failed to read clipboard text for terminal paste", error);
   }
-  // Multi-line paste confirmation (#3398): network-device CLIs (Cisco IOS,
-  // Huawei VRP, H3C Comware) execute every pasted line immediately and have
-  // no bracketed-paste protection, so let the user review before sending.
-  // Applied to non-empty text and whitespace-only text alike, so a blank
-  // multi-line clipboard cannot silently submit Enter presses at a prompt.
-  const pasteWithConfirmGate = async (session: string, raw: string): Promise<void> => {
-    if (
-      confirmMultilinePaste?.enabled
-      && shouldConfirmMultilinePaste(raw, { minLines: confirmMultilinePaste.minLines })
-    ) {
-      const decision = confirmMultilinePaste.requestConfirm
-        ? await confirmMultilinePaste.requestConfirm({ ...getMultilinePasteInfo(raw), text: raw })
-        : null;
-      if (!decision || decision.action === "cancel") return;
-      if (decision.action === "line-by-line") {
-        // An explicitly emptied preview means "send nothing"; only a missing
-        // value falls back to the original clipboard text.
-        const lineData = withFinalLineTerminator(normalizeLineEndings(decision.text ?? raw));
-        if (!lineData) return;
-        terminalBackend.writeToSession(session, lineData, {
-          automated: true,
-          lineDelayMs: AUTO_RUN_SNIPPET_LINE_DELAY_MS,
-          sensitive: isSensitiveInput?.() === true,
-        });
-        // Broadcast mode: peers must mirror the confirmed lines too. The
-        // broadcast targets exclude the source session, so this does not
-        // double-send to the active session.
-        onPasteData?.(lineData, { lineDelayMs: AUTO_RUN_SNIPPET_LINE_DELAY_MS });
-        scrollToBottomAfterProgrammaticInput?.(lineData);
-        term.focus?.();
-        return;
-      }
-      pasteTextIntoTerminal(term, decision.text ?? raw, {
-        scrollOnPaste,
-        onPasteData,
-      });
-      return;
-    }
-    pasteTextIntoTerminal(term, raw, {
-      scrollOnPaste,
-      onPasteData,
-    });
-  };
-
   // Prefer real text paste. Whitespace-only is deferred until after the local
   // image probe so screenshot clipboards that also carry blank text/plain can
   // still forward Ctrl+V for nested TUIs.
   if (text.trim() && sessionId) {
-    await pasteWithConfirmGate(sessionId, text);
+    await pasteTextWithMultilineConfirm(text, {
+      confirmMultilinePaste,
+      isSensitiveInput,
+      onPasteData,
+      scrollOnPaste,
+      scrollToBottomAfterProgrammaticInput,
+      sessionId,
+      terminalBackend,
+      term,
+    });
     return;
   }
 
@@ -227,6 +269,15 @@ export async function handleTerminalClipboardPaste({
   // local clipboard image is present. Multi-line whitespace still goes through
   // the confirmation gate so it cannot bypass the review dialog (#3398).
   if (text && sessionId) {
-    await pasteWithConfirmGate(sessionId, text);
+    await pasteTextWithMultilineConfirm(text, {
+      confirmMultilinePaste,
+      isSensitiveInput,
+      onPasteData,
+      scrollOnPaste,
+      scrollToBottomAfterProgrammaticInput,
+      sessionId,
+      terminalBackend,
+      term,
+    });
   }
 }

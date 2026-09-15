@@ -63,6 +63,18 @@ test("paste selection dismisses the history preview before sending text", async 
   assert.equal(source.split("requestHistoryPreviewHide(term.element?.parentElement)").length - 1, 2);
 });
 
+test("paste selection routes through the multi-line paste confirmation gate", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("./hooks/useTerminalContextActions.ts", import.meta.url), "utf8");
+  const runtimeSource = readFileSync(new URL("./runtime/createXTermRuntime.ts", import.meta.url), "utf8");
+  // Context-menu Paste Selection goes through the shared #3398 gate.
+  assert.match(source, /const onPasteSelection = useCallback\(async \(\) => \{[\s\S]*?pasteTextWithMultilineConfirm\(selection, \{[\s\S]*?requestMultilinePasteConfirm/u);
+  // The pasteSelection shortcut applies the same gate instead of pasting
+  // the selected text directly into the session.
+  assert.match(runtimeSource, /case "pasteSelection": \{[\s\S]*?pasteTextWithMultilineConfirm\(selection, \{/u);
+  assert.doesNotMatch(runtimeSource, /case "pasteSelection":[\s\S]*?pasteTextIntoTerminal/u);
+});
+
 test("terminal context paste never broadcasts password-prompt input", () => {
   const didBroadcast = broadcastTerminalPasteData("secret", {
     sourceSessionId: "workspace-session-1",

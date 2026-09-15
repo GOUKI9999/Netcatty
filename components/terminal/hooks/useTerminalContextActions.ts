@@ -6,13 +6,12 @@ import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge"
 import { logger } from "../../../lib/logger";
 import type { MultilinePasteConfirmGate } from "../terminalClipboardPaste";
 import type { TerminalBroadcastInputOptions } from "../terminalHelpers";
-import { pasteTextIntoTerminal } from "../runtime/terminalUserPaste";
 import { clearTerminalViewportAndSyncPty } from "../clearTerminalViewport";
 import {
   handleRemoteClipboardImageUpload,
   type RemoteClipboardImageUploadResult,
 } from "../clipboardImagePaste";
-import { handleTerminalClipboardPaste } from "../terminalClipboardPaste";
+import { handleTerminalClipboardPaste, pasteTextWithMultilineConfirm } from "../terminalClipboardPaste";
 import { pulseCopyOnSelectUserCommand } from "../copyOnSelect";
 import { getTerminalSelectionForClipboard } from "../normalizeTerminalSelection";
 import {
@@ -236,7 +235,7 @@ export const useTerminalContextActions = ({
     terminalBackend,
   ]);
 
-  const onPasteSelection = useCallback(() => {
+  const onPasteSelection = useCallback(async () => {
     const term = termRef.current;
     if (!term) return;
     const selection = getHistoryPreviewSelectionFromRoot(term.element?.parentElement)
@@ -247,11 +246,32 @@ export const useTerminalContextActions = ({
     if (!selection || !sessionRef.current) return;
     requestHistoryPreviewHide(term.element?.parentElement);
     term.focus();
-    pasteTextIntoTerminal(term, selection, {
-      scrollOnPaste: scrollOnPasteRef?.current ?? false,
+    // Route through the multi-line paste confirmation gate (#3398) so a
+    // selected multi-line region cannot be sent without review, just like
+    // the clipboard paste path.
+    await pasteTextWithMultilineConfirm(selection, {
+      confirmMultilinePaste: multilinePasteConfirmRef?.current
+        ? { ...multilinePasteConfirmRef.current, requestConfirm: requestMultilinePasteConfirm }
+        : undefined,
+      isSensitiveInput: () => passwordPromptActiveRef?.current === true,
       onPasteData: broadcastUserPasteData,
+      scrollOnPaste: scrollOnPasteRef?.current ?? false,
+      scrollToBottomAfterProgrammaticInput,
+      sessionId: sessionRef.current,
+      terminalBackend,
+      term,
     });
-  }, [broadcastUserPasteData, normalizeTextOnCopyRef, sessionRef, termRef, scrollOnPasteRef]);
+  }, [
+    broadcastUserPasteData,
+    multilinePasteConfirmRef,
+    normalizeTextOnCopyRef,
+    passwordPromptActiveRef,
+    scrollToBottomAfterProgrammaticInput,
+    sessionRef,
+    termRef,
+    scrollOnPasteRef,
+    terminalBackend,
+  ]);
 
   const onSelectAll = useCallback(() => {
     const term = termRef.current;

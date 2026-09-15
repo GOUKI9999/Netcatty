@@ -177,10 +177,11 @@ import {
 } from "./terminalOutputPipeline";
 import {
   markExpectedTerminalCursorPositionReport,
-  pasteTextIntoTerminal,
   shouldBroadcastTerminalUserInput,
   shouldSuppressTerminalInputScrollForUserPaste,
 } from "./terminalUserPaste";
+import { pasteTextWithMultilineConfirm } from "../terminalClipboardPaste";
+import { requestMultilinePasteConfirm } from "../../../application/state/multilinePasteConfirmStore";
 import {
   consumeOsc133CommandCompletion,
   type PromptLineBreakState,
@@ -2146,9 +2147,23 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
               const id = ctx.sessionRef.current;
               if (selection && id) {
                 hideHistoryPreview();
-                pasteTextIntoTerminal(term, selection, {
-                  scrollOnPaste: shouldScrollOnTerminalPaste(ctx.terminalSettingsRef.current),
+                // Route through the multi-line paste confirmation gate
+                // (#3398) so a selected multi-line region cannot be sent to
+                // the session (and broadcast peers) without review, just
+                // like the clipboard paste path.
+                void pasteTextWithMultilineConfirm(selection, {
+                  confirmMultilinePaste: {
+                    enabled: ctx.terminalSettingsRef.current?.confirmBeforeMultilinePaste === true,
+                    minLines: ctx.terminalSettingsRef.current?.multilinePasteConfirmMinLines,
+                    requestConfirm: requestMultilinePasteConfirm,
+                  },
+                  isSensitiveInput: () => ctx.passwordPromptActiveRef?.current === true,
                   onPasteData: broadcastUserPasteData,
+                  scrollOnPaste: shouldScrollOnTerminalPaste(ctx.terminalSettingsRef.current),
+                  scrollToBottomAfterProgrammaticInput: scrollToBottomAfterInput,
+                  sessionId: id,
+                  terminalBackend: ctx.terminalBackend,
+                  term,
                 });
               }
               break;
