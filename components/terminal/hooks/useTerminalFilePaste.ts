@@ -2,10 +2,12 @@ import type { Terminal as XTerm } from "@xterm/xterm";
 import type React from "react";
 import { useEffect } from "react";
 
+import { requestMultilinePasteConfirm } from "../../../application/state/multilinePasteConfirmStore";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { logger } from "../../../lib/logger";
 import type { TerminalSession } from "../../../types";
 import type { RemoteClipboardImageUploadResult } from "../clipboardImagePaste";
+import type { MultilinePasteConfirmGate } from "../terminalClipboardPaste";
 import { handleTerminalClipboardPaste } from "../terminalClipboardPaste";
 
 interface UseTerminalFilePasteOptions {
@@ -23,6 +25,8 @@ interface UseTerminalFilePasteOptions {
   containerRef: React.RefObject<HTMLDivElement | null>;
   /** Remote sessions only: auto-upload a clipboard image on paste. */
   autoUploadClipboardImage?: boolean;
+  /** Multi-line paste confirmation gate (#3398); undefined keeps confirm off. */
+  multilinePasteConfirmRef?: React.RefObject<Omit<MultilinePasteConfirmGate, "requestConfirm"> | undefined>;
   getRemoteCwd?: () => Promise<string | null | undefined>;
   onClipboardImageUploadResult?: (result: RemoteClipboardImageUploadResult) => void;
 }
@@ -39,6 +43,7 @@ export function useTerminalFilePaste({
   scrollToBottomAfterProgrammaticInput,
   containerRef,
   autoUploadClipboardImage = false,
+  multilinePasteConfirmRef,
   getRemoteCwd,
   onClipboardImageUploadResult,
 }: UseTerminalFilePasteOptions) {
@@ -71,6 +76,9 @@ export function useTerminalFilePaste({
             bridge,
             autoUploadClipboardImage: wantsImageUpload,
             clipboardImageBridge: bridge ?? undefined,
+            confirmMultilinePaste: multilinePasteConfirmRef?.current
+              ? { ...multilinePasteConfirmRef.current, requestConfirm: requestMultilinePasteConfirm }
+              : undefined,
             getRemoteCwd,
             isLocalConnection,
             isSensitiveInput,
@@ -96,6 +104,7 @@ export function useTerminalFilePaste({
   }, [
     autoUploadClipboardImage,
     containerRef,
+    multilinePasteConfirmRef,
     getRemoteCwd,
     isLocalConnection,
     isSensitiveInput,

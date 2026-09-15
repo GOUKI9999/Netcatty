@@ -5,8 +5,15 @@ import {
   type RemoteClipboardImageBridge,
   type RemoteClipboardImageUploadResult,
 } from "./clipboardImagePaste";
-import { extractRootPathsFromClipboardFiles } from "./terminalHelpers";
+import { extractRootPathsFromClipboardFiles, AUTO_RUN_SNIPPET_LINE_DELAY_MS } from "./terminalHelpers";
 import { pasteTextIntoTerminal } from "./runtime/terminalUserPaste";
+import {
+  getMultilinePasteInfo,
+  shouldConfirmMultilinePaste,
+  type MultilinePasteConfirmAction,
+  type MultilinePasteInfo,
+} from "../../domain/terminalPasteConfirm";
+import { normalizeLineEndings } from "../../lib/utils";
 import { logger } from "../../lib/logger";
 
 /** ASCII Ctrl+V - forwarded so nested TUIs can run their own image-paste bindings. */
@@ -16,6 +23,22 @@ type ClipboardFileBridge = Pick<
   Partial<NetcattyBridge>,
   "readClipboardFiles" | "hasClipboardImage"
 >;
+
+export type MultilinePasteConfirmRequestFn = (
+  info: MultilinePasteInfo & { text: string },
+) => Promise<{ action: MultilinePasteConfirmAction; text: string }>;
+
+/**
+ * Gate for the multi-line paste confirmation dialog (#3398). When enabled and
+ * the clipboard text reaches the configured line threshold, the paste waits
+ * for the user to choose send / send-line-by-line / cancel.
+ */
+export type MultilinePasteConfirmGate = {
+  enabled: boolean;
+  minLines: number;
+  /** Opens the confirm dialog; resolves with the chosen action + preview text. */
+  requestConfirm?: MultilinePasteConfirmRequestFn;
+};
 
 type TerminalClipboardPasteOptions = {
   bridge?: ClipboardFileBridge;
@@ -27,6 +50,7 @@ type TerminalClipboardPasteOptions = {
    */
   autoUploadClipboardImage?: boolean;
   clipboardImageBridge?: RemoteClipboardImageBridge;
+  confirmMultilinePaste?: MultilinePasteConfirmGate;
   getRemoteCwd?: () => Promise<string | null | undefined>;
   isLocalConnection: boolean;
   isSensitiveInput?: () => boolean;
@@ -37,7 +61,7 @@ type TerminalClipboardPasteOptions = {
   scrollToBottomAfterProgrammaticInput?: (data: string) => void;
   sessionId: string | null | undefined;
   terminalBackend: {
-    writeToSession: (sessionId: string, data: string, options?: { automated?: boolean; sensitive?: boolean }) => void;
+    writeToSession: (sessionId: string, data: string, options?: { automated?: boolean; sensitive?: boolean; lineDelayMs?: number }) => void;
   };
   term: Pick<XTerm, "paste" | "scrollToBottom"> & Partial<Pick<XTerm, "focus">>;
 };
@@ -46,6 +70,7 @@ export async function handleTerminalClipboardPaste({
   bridge,
   autoUploadClipboardImage = false,
   clipboardImageBridge,
+  confirmMultilinePaste,
   getRemoteCwd,
   isLocalConnection,
   isSensitiveInput,
@@ -123,6 +148,30 @@ export async function handleTerminalClipboardPaste({
   // image probe so screenshot clipboards that also carry blank text/plain can
   // still forward Ctrl+V for nested TUIs.
   if (text.trim() && sessionId) {
+    // Multi-line paste confirmation (#3398): network-device CLIs (Cisco IOS,
+    // Huawei VRP, H3C Comware) execute every pasted line immediately and have
+    // no bracketed-paste protection, so let the user review before sending.
+    if (
+      confirmMultilinePaste?.enabled
+      && shouldConfirmMultilinePaste(text, { minLines: confirmMultilinePaste.minLines })
+    ) {
+      const decision = confirmMultilinePaste.requestConfirm
+        ? await confirmMultilinePaste.requestConfirm({ ...getMultilinePasteInfo(text), text })
+        : null;
+      if (!decision || decision.action === "cancel") return;
+      if (decision.action === "line-by-line") {
+        const lineData = normalizeLineEndings(decision.text || text);
+        terminalBackend.writeToSession(sessionId, lineData, {
+          automated: true,
+          lineDelayMs: AUTO_RUN_SNIPPET_LINE_DELAY_MS,
+          sensitive: isSensitiveInput?.() === true,
+        });
+        scrollToBottomAfterProgrammaticInput?.(lineData);
+        term.focus?.();
+        return;
+      }
+      text = decision.text || text;
+    }
     pasteTextIntoTerminal(term, text, {
       scrollOnPaste,
       onPasteData,

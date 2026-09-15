@@ -1,8 +1,10 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { useCallback, useRef } from "react";
 import type { RefObject } from "react";
+import { requestMultilinePasteConfirm } from "../../../application/state/multilinePasteConfirmStore";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { logger } from "../../../lib/logger";
+import type { MultilinePasteConfirmGate } from "../terminalClipboardPaste";
 import { pasteTextIntoTerminal } from "../runtime/terminalUserPaste";
 import { clearTerminalViewportAndSyncPty } from "../clearTerminalViewport";
 import {
@@ -66,6 +68,7 @@ export const useTerminalContextActions = ({
   isLocalConnection,
   supportsRemoteImagePaste,
   autoUploadClipboardImageOnPasteRef,
+  multilinePasteConfirmRef,
   clearWipesScrollbackRef,
   normalizeTextOnCopyRef,
   terminalBackend,
@@ -86,6 +89,8 @@ export const useTerminalContextActions = ({
   supportsRemoteImagePaste: boolean;
   /** When true, paste auto-uploads a clipboard image (remote sessions only). */
   autoUploadClipboardImageOnPasteRef?: RefObject<boolean | undefined>;
+  /** Multi-line paste confirmation gate (#3398); undefined keeps confirm off. */
+  multilinePasteConfirmRef?: RefObject<Omit<MultilinePasteConfirmGate, "requestConfirm"> | undefined>;
   clearWipesScrollbackRef?: RefObject<boolean | undefined>;
   /** When false, copy uses raw getSelection(). Default true when unset. */
   normalizeTextOnCopyRef?: RefObject<boolean | undefined>;
@@ -161,6 +166,9 @@ export const useTerminalContextActions = ({
         autoUploadClipboardImage:
           supportsRemoteImagePaste && autoUploadClipboardImageOnPasteRef?.current === true,
         clipboardImageBridge: bridge ?? undefined,
+        confirmMultilinePaste: multilinePasteConfirmRef?.current
+          ? { ...multilinePasteConfirmRef.current, requestConfirm: requestMultilinePasteConfirm }
+          : undefined,
         getRemoteCwd,
         isLocalConnection,
         isSensitiveInput: () => passwordPromptActiveRef?.current === true,
@@ -179,6 +187,7 @@ export const useTerminalContextActions = ({
   }, [
     autoUploadClipboardImageOnPasteRef,
     broadcastUserPasteData,
+    multilinePasteConfirmRef,
     getRemoteCwd,
     isLocalConnection,
     onClipboardImageUploadResult,
