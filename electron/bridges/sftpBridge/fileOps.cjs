@@ -891,11 +891,15 @@ function createFileOpsApi(ctx) {
       // size-sensitive backend checks can skip it, but that value must not
       // cross the IPC boundary: conflict dialogs and TransferTask.totalBytes
       // would render "NaN undefined". Map unknown to 0 ("--" when formatted).
-      const size = Number.isFinite(stat.size) ? stat.size : 0;
+      const sizeKnown = Number.isFinite(stat.size);
+      const size = sizeKnown ? stat.size : 0;
       return {
         name: path.basename(payloadPath),
         type: stat.isDirectory ? "directory" : stat.isSymbolicLink ? "symlink" : "file",
         size,
+        // Skip-unchanged and resume checks must not mistake the placeholder 0
+        // for a real zero-byte file; they gate on this marker instead.
+        sizeKnown,
         lastModified: stat.modifyTime,
         permissions,
       };
