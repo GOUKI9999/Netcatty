@@ -5,6 +5,7 @@ import { requestMultilinePasteConfirm } from "../../../application/state/multili
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { logger } from "../../../lib/logger";
 import type { MultilinePasteConfirmGate } from "../terminalClipboardPaste";
+import type { TerminalBroadcastInputOptions } from "../terminalHelpers";
 import { pasteTextIntoTerminal } from "../runtime/terminalUserPaste";
 import { clearTerminalViewportAndSyncPty } from "../clearTerminalViewport";
 import {
@@ -29,7 +30,9 @@ type BroadcastPasteRefs = {
   sourceSessionId: string;
   sessionRef: RefObject<string | null>;
   isBroadcastEnabledRef?: RefObject<boolean | undefined>;
-  onBroadcastInputRef?: RefObject<((data: string, sourceSessionId: string) => void) | undefined>;
+  onBroadcastInputRef?: RefObject<
+    ((data: string, sourceSessionId: string, options?: TerminalBroadcastInputOptions) => void) | undefined
+  >;
   passwordPromptActiveRef?: RefObject<boolean | undefined>;
 };
 
@@ -42,6 +45,7 @@ export const broadcastTerminalPasteData = (
     onBroadcastInputRef,
     passwordPromptActiveRef,
   }: BroadcastPasteRefs,
+  options?: TerminalBroadcastInputOptions,
 ): boolean => {
   if (
     passwordPromptActiveRef?.current !== true
@@ -49,7 +53,7 @@ export const broadcastTerminalPasteData = (
     && isBroadcastEnabledRef?.current
     && onBroadcastInputRef?.current
   ) {
-    onBroadcastInputRef.current(data, sourceSessionId);
+    onBroadcastInputRef.current(data, sourceSessionId, options);
     return true;
   }
   return false;
@@ -83,7 +87,9 @@ export const useTerminalContextActions = ({
   onHasSelectionChange?: (hasSelection: boolean) => void;
   scrollOnPasteRef?: RefObject<boolean>;
   isBroadcastEnabledRef?: RefObject<boolean | undefined>;
-  onBroadcastInputRef?: RefObject<((data: string, sourceSessionId: string) => void) | undefined>;
+  onBroadcastInputRef?: RefObject<
+    ((data: string, sourceSessionId: string, options?: TerminalBroadcastInputOptions) => void) | undefined
+  >;
   passwordPromptActiveRef?: RefObject<boolean | undefined>;
   isLocalConnection: boolean;
   supportsRemoteImagePaste: boolean;
@@ -131,14 +137,14 @@ export const useTerminalContextActions = ({
     }
   }, [sessionName, t, termRef]);
 
-  const broadcastUserPasteData = useCallback((data: string) => {
+  const broadcastUserPasteData = useCallback((data: string, options?: TerminalBroadcastInputOptions) => {
     return broadcastTerminalPasteData(data, {
       sourceSessionId,
       sessionRef,
       isBroadcastEnabledRef,
       onBroadcastInputRef,
       passwordPromptActiveRef,
-    });
+    }, options);
   }, [isBroadcastEnabledRef, onBroadcastInputRef, passwordPromptActiveRef, sessionRef, sourceSessionId]);
 
   const onCopy = useCallback(() => {

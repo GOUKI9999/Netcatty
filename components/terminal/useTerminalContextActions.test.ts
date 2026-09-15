@@ -21,6 +21,26 @@ test("terminal context paste reports whether it broadcast to peers", () => {
   assert.deepEqual(broadcasted, [{ data: "line one", sessionId: "workspace-session-1" }]);
 });
 
+test("terminal context paste forwards paste options to the broadcast handler", () => {
+  const broadcasted: Array<{ data: string; sessionId: string; options?: { lineDelayMs?: number } }> = [];
+
+  const didBroadcast = broadcastTerminalPasteData("line one", {
+    sourceSessionId: "workspace-session-1",
+    sessionRef: { current: "backend-session-1" },
+    isBroadcastEnabledRef: { current: true },
+    onBroadcastInputRef: {
+      current: (data, sourceSessionId, options) => {
+        broadcasted.push({ data, sessionId: sourceSessionId, options });
+      },
+    },
+  }, { lineDelayMs: 250 });
+
+  assert.equal(didBroadcast, true);
+  assert.deepEqual(broadcasted, [
+    { data: "line one", sessionId: "workspace-session-1", options: { lineDelayMs: 250 } },
+  ]);
+});
+
 test("terminal context paste reports false when broadcast is disabled", () => {
   const didBroadcast = broadcastTerminalPasteData("line one", {
     sourceSessionId: "workspace-session-1",
