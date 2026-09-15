@@ -1,5 +1,7 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 
+import { sanitizeTerminalInput } from "./terminalInputSanitize";
+
 type PasteTarget = Pick<XTerm, "paste" | "scrollToBottom"> &
   Partial<Pick<XTerm, "cols" | "rows" | "write">> & {
     modes?: { bracketedPasteMode?: boolean };
@@ -340,9 +342,14 @@ export function pasteTextIntoTerminal(
   // open. The state is consumed chunk-by-chunk like the scroll/broadcast
   // states so it never leaks to later, unrelated input.
   if (options.sensitive === true) {
+    // The input handler sanitizes chunk data (stripping zero-width /
+    // invisible characters such as U+200B or a BOM) before consulting this
+    // override, so the stored variants must be sanitized equivalently or a
+    // paste containing such characters would never match and could be
+    // broadcast / recorded as nonsensitive.
     pasteSensitiveStates.set(term, {
       expiresAt: getNow() + PASTE_INPUT_SCROLL_WINDOW_MS,
-      remainingDataVariants: getPasteInputDataVariants(text),
+      remainingDataVariants: getPasteInputDataVariants(sanitizeTerminalInput(text)),
     });
   } else {
     pasteSensitiveStates.delete(term);
