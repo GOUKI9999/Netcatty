@@ -174,6 +174,7 @@ export const useTerminalContextActions = ({
         confirmMultilinePaste: multilinePasteConfirmRef?.current
           ? { ...multilinePasteConfirmRef.current, requestConfirm: requestMultilinePasteConfirm }
           : undefined,
+        getCurrentSessionId: () => sessionRef.current,
         getRemoteCwd,
         isLocalConnection,
         isSensitiveInput: () => passwordPromptActiveRef?.current === true,
@@ -253,6 +254,7 @@ export const useTerminalContextActions = ({
       confirmMultilinePaste: multilinePasteConfirmRef?.current
         ? { ...multilinePasteConfirmRef.current, requestConfirm: requestMultilinePasteConfirm }
         : undefined,
+      getCurrentSessionId: () => sessionRef.current,
       isSensitiveInput: () => passwordPromptActiveRef?.current === true,
       onPasteData: broadcastUserPasteData,
       scrollOnPaste: scrollOnPasteRef?.current ?? false,

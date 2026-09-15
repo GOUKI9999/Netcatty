@@ -2161,6 +2161,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
                     minLines: ctx.terminalSettingsRef.current?.multilinePasteConfirmMinLines,
                     requestConfirm: requestMultilinePasteConfirm,
                   },
+                  getCurrentSessionId: () => ctx.sessionRef.current,
                   isSensitiveInput: () => ctx.passwordPromptActiveRef?.current === true,
                   onPasteData: broadcastUserPasteData,
                   scrollOnPaste: shouldScrollOnTerminalPaste(ctx.terminalSettingsRef.current),

@@ -559,6 +559,90 @@ test("multi-line paste confirmation can send line by line with delay", async () 
   assert.equal(focused, true);
 });
 
+test("line-by-line send converts a single trailing LF to CR so the last line is submitted", async () => {
+  const writes: Array<{ data: string; options?: { lineDelayMs?: number } }> = [];
+
+  await handleTerminalClipboardPaste({
+    isLocalConnection: false,
+    confirmMultilinePaste: {
+      enabled: true,
+      minLines: 2,
+      requestConfirm: async () => ({ action: "line-by-line", text: "show run\n" }),
+    },
+    readClipboardText: async () => "show run\nconf t",
+    sessionId: "session-1",
+    terminalBackend: {
+      writeToSession: (_sessionId, data, options) => writes.push({ data, options }),
+    },
+    term: {
+      paste: () => {},
+      scrollToBottom: () => {},
+    },
+  });
+
+  assert.deepEqual(writes, [{
+    data: "show run\r",
+    options: { automated: true, lineDelayMs: 250, sensitive: false },
+  }]);
+});
+
+test("line-by-line send revalidates the backend session after the dialog resolves", async () => {
+  const writes: Array<{ sessionId: string; data: string }> = [];
+  let liveSessionId: string | null = "session-1";
+
+  await handleTerminalClipboardPaste({
+    isLocalConnection: false,
+    confirmMultilinePaste: {
+      enabled: true,
+      minLines: 2,
+      requestConfirm: async () => {
+        // Simulate a reconnect replacing the backend session while the
+        // confirmation dialog is open.
+        liveSessionId = "session-2";
+        return { action: "line-by-line", text: "conf t\nint gi0/0" };
+      },
+    },
+    readClipboardText: async () => "conf t\nint gi0/0",
+    sessionId: "session-1",
+    getCurrentSessionId: () => liveSessionId,
+    terminalBackend: {
+      writeToSession: (sessionId, data) => writes.push({ sessionId, data }),
+    },
+    term: {
+      paste: () => {},
+      scrollToBottom: () => {},
+    },
+  });
+
+  assert.deepEqual(writes, [{ sessionId: "session-2", data: "conf t\nint gi0/0\r" }]);
+});
+
+test("line-by-line send drops the paste when the session is gone after the dialog", async () => {
+  let liveSessionId: string | null = "session-1";
+
+  await handleTerminalClipboardPaste({
+    isLocalConnection: false,
+    confirmMultilinePaste: {
+      enabled: true,
+      minLines: 2,
+      requestConfirm: async () => {
+        liveSessionId = null;
+        return { action: "line-by-line", text: "conf t\nint gi0/0" };
+      },
+    },
+    readClipboardText: async () => "conf t\nint gi0/0",
+    sessionId: "session-1",
+    getCurrentSessionId: () => liveSessionId,
+    terminalBackend: {
+      writeToSession: () => assert.fail("defunct session must not receive the paste"),
+    },
+    term: {
+      paste: () => {},
+      scrollToBottom: () => {},
+    },
+  });
+});
+
 test("line-by-line send terminates the final line when the text lacks a trailing newline", async () => {
   const writes: Array<{ data: string; options?: { lineDelayMs?: number } }> = [];
 
