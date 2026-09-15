@@ -26,7 +26,15 @@ type ClipboardFileBridge = Pick<
 
 export type MultilinePasteConfirmRequestFn = (
   info: MultilinePasteInfo & { text: string },
-) => Promise<{ action: MultilinePasteConfirmAction; text: string }>;
+) => Promise<{ action: MultilinePasteConfirmAction; text?: string }>;
+
+/**
+ * The line-by-line backend writes chunks ending at a line separator with a
+ * trailing `\r`, but leaves the final chunk unterminated when the source text
+ * does not end with a newline. Append one so the last line is executed too.
+ */
+const withFinalLineTerminator = (data: string): string =>
+  data.length > 0 && !data.endsWith("\n") ? `${data}\r` : data;
 
 /**
  * Gate for the multi-line paste confirmation dialog (#3398). When enabled and
@@ -55,7 +63,7 @@ type TerminalClipboardPasteOptions = {
   isLocalConnection: boolean;
   isSensitiveInput?: () => boolean;
   onClipboardImageUploadResult?: (result: RemoteClipboardImageUploadResult) => void;
-  onPasteData?: (data: string) => boolean | void;
+  onPasteData?: (data: string, options?: { lineDelayMs?: number }) => boolean | void;
   readClipboardText: () => Promise<string>;
   scrollOnPaste?: boolean;
   scrollToBottomAfterProgrammaticInput?: (data: string) => void;
@@ -160,17 +168,24 @@ export async function handleTerminalClipboardPaste({
         : null;
       if (!decision || decision.action === "cancel") return;
       if (decision.action === "line-by-line") {
-        const lineData = normalizeLineEndings(decision.text || text);
+        // An explicitly emptied preview means "send nothing"; only a missing
+        // value falls back to the original clipboard text.
+        const lineData = withFinalLineTerminator(normalizeLineEndings(decision.text ?? text));
+        if (!lineData) return;
         terminalBackend.writeToSession(sessionId, lineData, {
           automated: true,
           lineDelayMs: AUTO_RUN_SNIPPET_LINE_DELAY_MS,
           sensitive: isSensitiveInput?.() === true,
         });
+        // Broadcast mode: peers must mirror the confirmed lines too. The
+        // broadcast targets exclude the source session, so this does not
+        // double-send to the active session.
+        onPasteData?.(lineData, { lineDelayMs: AUTO_RUN_SNIPPET_LINE_DELAY_MS });
         scrollToBottomAfterProgrammaticInput?.(lineData);
         term.focus?.();
         return;
       }
-      text = decision.text || text;
+      text = decision.text ?? text;
     }
     pasteTextIntoTerminal(term, text, {
       scrollOnPaste,

@@ -516,6 +516,7 @@ test("multi-line paste confirmation can send line by line with delay", async () 
   const writes: Array<{ data: string; options?: { automated?: boolean; lineDelayMs?: number; sensitive?: boolean } }> = [];
   const scrolled: string[] = [];
   const pasted: string[] = [];
+  const broadcast: Array<{ data: string; options?: { lineDelayMs?: number } }> = [];
   let focused = false;
 
   await handleTerminalClipboardPaste({
@@ -527,6 +528,10 @@ test("multi-line paste confirmation can send line by line with delay", async () 
       requestConfirm: async () => ({ action: "line-by-line", text: "conf t\r\nint gi0/0" }),
     },
     readClipboardText: async () => "conf t\nint gi0/0",
+    onPasteData: (data, options) => {
+      broadcast.push({ data, options });
+      return true;
+    },
     scrollToBottomAfterProgrammaticInput: (data) => scrolled.push(data),
     sessionId: "session-1",
     terminalBackend: {
@@ -542,12 +547,69 @@ test("multi-line paste confirmation can send line by line with delay", async () 
   });
 
   assert.deepEqual(writes, [{
-    data: "conf t\nint gi0/0",
+    data: "conf t\nint gi0/0\r",
     options: { automated: true, lineDelayMs: 250, sensitive: true },
   }]);
-  assert.deepEqual(scrolled, ["conf t\nint gi0/0"]);
+  assert.deepEqual(broadcast, [{
+    data: "conf t\nint gi0/0\r",
+    options: { lineDelayMs: 250 },
+  }]);
+  assert.deepEqual(scrolled, ["conf t\nint gi0/0\r"]);
   assert.deepEqual(pasted, []);
   assert.equal(focused, true);
+});
+
+test("line-by-line send terminates the final line when the text lacks a trailing newline", async () => {
+  const writes: Array<{ data: string; options?: { lineDelayMs?: number } }> = [];
+
+  await handleTerminalClipboardPaste({
+    isLocalConnection: false,
+    confirmMultilinePaste: {
+      enabled: true,
+      minLines: 2,
+      requestConfirm: async () => ({ action: "line-by-line", text: "conf t\nint gi0/0" }),
+    },
+    readClipboardText: async () => "conf t\nint gi0/0",
+    sessionId: "session-1",
+    terminalBackend: {
+      writeToSession: (_sessionId, data, options) => writes.push({ data, options }),
+    },
+    term: {
+      paste: () => {},
+      scrollToBottom: () => {},
+    },
+  });
+
+  assert.deepEqual(writes, [{
+    data: "conf t\nint gi0/0\r",
+    options: { automated: true, lineDelayMs: 250, sensitive: false },
+  }]);
+});
+
+test("an intentionally emptied preview sends nothing instead of the original text", async () => {
+  const writes: string[] = [];
+  const pasted: string[] = [];
+
+  await handleTerminalClipboardPaste({
+    isLocalConnection: false,
+    confirmMultilinePaste: {
+      enabled: true,
+      minLines: 2,
+      requestConfirm: async () => ({ action: "send", text: "" }),
+    },
+    readClipboardText: async () => "line1\nline2",
+    sessionId: "session-1",
+    terminalBackend: {
+      writeToSession: (_sessionId, data) => writes.push(data),
+    },
+    term: {
+      paste: (text) => pasted.push(text),
+      scrollToBottom: () => {},
+    },
+  });
+
+  assert.deepEqual(writes, []);
+  assert.deepEqual(pasted, []);
 });
 
 test("cancelling the multi-line paste confirmation drops the paste", async () => {

@@ -20,7 +20,7 @@ interface UseTerminalFilePasteOptions {
   };
   isSensitiveInput?: () => boolean;
   scrollOnPasteRef?: React.RefObject<boolean>;
-  onPasteData?: (data: string) => boolean | void;
+  onPasteData?: (data: string, options?: { lineDelayMs?: number }) => boolean | void;
   scrollToBottomAfterProgrammaticInput: (data: string) => void;
   containerRef: React.RefObject<HTMLDivElement | null>;
   /** Remote sessions only: auto-upload a clipboard image on paste. */
@@ -60,7 +60,15 @@ export function useTerminalFilePaste({
         autoUploadClipboardImage && !isLocalConnection && !!bridge?.readClipboardImage;
       const canHandleLocalPaste =
         isLocalConnection && !!(bridge?.readClipboardFiles || bridge?.hasClipboardImage);
-      if (!wantsImageUpload && !canHandleLocalPaste) return;
+      // The multi-line paste confirmation (#3398) must also intercept plain
+      // remote keyboard pastes; otherwise xterm's default handler would send
+      // the lines without the safety dialog when neither image upload nor
+      // local file handling applies.
+      const shouldInterceptPaste =
+        wantsImageUpload
+        || canHandleLocalPaste
+        || !!multilinePasteConfirmRef?.current?.enabled;
+      if (!shouldInterceptPaste) return;
 
       // ⚡ Must call preventDefault SYNCHRONOUSLY — the event lifecycle
       // is synchronous; calling it after an await is too late and the

@@ -3249,14 +3249,17 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     termRef.current?.scrollToBottom();
   }, [activeScriptRun]);
 
-  const broadcastUserPasteData = useCallback((data: string) => {
+  const broadcastUserPasteData = useCallback((
+    data: string,
+    options?: { lineDelayMs?: number },
+  ) => {
     if (
       !passwordPromptActiveRef.current
       && sessionRef.current
       && isBroadcastEnabledRef.current
       && onBroadcastInputRef.current
     ) {
-      onBroadcastInputRef.current(data, sessionId);
+      onBroadcastInputRef.current(data, sessionId, options);
       return true;
     }
     return false;
