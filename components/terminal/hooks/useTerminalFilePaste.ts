@@ -76,6 +76,12 @@ export function useTerminalFilePaste({
       event.preventDefault();
       event.stopPropagation();
 
+      // Capture the pasted text synchronously: navigator.clipboard.readText()
+      // can be rejected (permissions / platform quirks) even though the event
+      // already carries the text, so prefer it and only fall back to the
+      // async clipboard API when the event has no text data.
+      const eventText = event.clipboardData?.getData("text/plain") ?? "";
+
       void (async () => {
         try {
           const term = termRef.current;
@@ -91,7 +97,10 @@ export function useTerminalFilePaste({
             isLocalConnection,
             isSensitiveInput,
             onClipboardImageUploadResult,
-            readClipboardText: () => navigator.clipboard.readText(),
+            readClipboardText: async () => {
+              if (eventText) return eventText;
+              return navigator.clipboard.readText();
+            },
             scrollOnPaste: scrollOnPasteRef?.current ?? false,
             onPasteData,
             sessionId: sessionRef.current,
