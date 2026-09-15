@@ -886,10 +886,16 @@ function createFileOpsApi(ctx) {
     }
     
     function formatSftpStatResult(payloadPath, stat, permissions) {
+      // The renderer contract (SftpStatResult.size) requires a number. A
+      // stat-less SCP host reports an unknown size internally (undefined) so
+      // size-sensitive backend checks can skip it, but that value must not
+      // cross the IPC boundary: conflict dialogs and TransferTask.totalBytes
+      // would render "NaN undefined". Map unknown to 0 ("--" when formatted).
+      const size = Number.isFinite(stat.size) ? stat.size : 0;
       return {
         name: path.basename(payloadPath),
         type: stat.isDirectory ? "directory" : stat.isSymbolicLink ? "symlink" : "file",
-        size: stat.size,
+        size,
         lastModified: stat.modifyTime,
         permissions,
       };
