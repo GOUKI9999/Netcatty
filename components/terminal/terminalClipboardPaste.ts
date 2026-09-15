@@ -180,6 +180,10 @@ export async function pasteTextWithMultilineConfirm(
       // Same post-await race as above: never fan a sensitive paste out to
       // broadcast peers via onPasteData.
       onPasteData: sensitive ? undefined : onPasteData,
+      // Carry the pre-dialog sensitivity snapshot through the normal Send
+      // path too: term.paste's input handler recomputes `sensitive` from the
+      // live password-prompt ref, which the dialog await may have cleared.
+      sensitive,
     });
     return;
   }

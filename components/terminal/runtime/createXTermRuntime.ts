@@ -179,6 +179,7 @@ import {
 import {
   markExpectedTerminalCursorPositionReport,
   shouldBroadcastTerminalUserInput,
+  shouldOverrideTerminalUserPasteSensitivity,
   shouldSuppressTerminalInputScrollForUserPaste,
 } from "./terminalUserPaste";
 import { pasteTextWithMultilineConfirm } from "../terminalClipboardPaste";
@@ -1235,7 +1236,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     const inputSource = options?.source ?? "terminal";
     const id = ctx.sessionRef.current;
     const dataToWrite = data;
-    const sensitive = ctx.passwordPromptActiveRef?.current === true;
+    // A programmatic paste can carry a sensitivity snapshot taken before a
+    // confirm-dialog await (terminalUserPaste.ts): remote output or a
+    // reconnect may have cleared passwordPromptActiveRef while the dialog was
+    // open, so the live ref alone would downgrade the secret to nonsensitive.
+    // The override is consumed only for the flagged paste data.
+    const sensitive = ctx.passwordPromptActiveRef?.current === true
+      || shouldOverrideTerminalUserPasteSensitivity(term, logicalData ?? data);
     let handledSubmittedInput = false;
     const submittedInput: { text: string; lineEnding: "\r\n" | "\r" | "\n" } | null =
       logicalData === null

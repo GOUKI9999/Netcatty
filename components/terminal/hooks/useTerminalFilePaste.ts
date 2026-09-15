@@ -93,6 +93,10 @@ export function useTerminalFilePaste({
             confirmMultilinePaste: multilinePasteConfirmRef?.current
               ? { ...multilinePasteConfirmRef.current, requestConfirm: requestMultilinePasteConfirm }
               : undefined,
+            // The confirm dialog can outlive the captured session (disconnect
+            // / auto-reconnect), so revalidate against the live session ref
+            // like the context-menu and shortcut callers do.
+            getCurrentSessionId: () => sessionRef.current,
             getRemoteCwd,
             isLocalConnection,
             isSensitiveInput,
