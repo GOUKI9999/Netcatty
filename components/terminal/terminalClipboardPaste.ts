@@ -152,27 +152,26 @@ export async function handleTerminalClipboardPaste({
     // empty so local image probe can still forward Ctrl+V.
     logger.warn("Failed to read clipboard text for terminal paste", error);
   }
-  // Prefer real text paste. Whitespace-only is deferred until after the local
-  // image probe so screenshot clipboards that also carry blank text/plain can
-  // still forward Ctrl+V for nested TUIs.
-  if (text.trim() && sessionId) {
-    // Multi-line paste confirmation (#3398): network-device CLIs (Cisco IOS,
-    // Huawei VRP, H3C Comware) execute every pasted line immediately and have
-    // no bracketed-paste protection, so let the user review before sending.
+  // Multi-line paste confirmation (#3398): network-device CLIs (Cisco IOS,
+  // Huawei VRP, H3C Comware) execute every pasted line immediately and have
+  // no bracketed-paste protection, so let the user review before sending.
+  // Applied to non-empty text and whitespace-only text alike, so a blank
+  // multi-line clipboard cannot silently submit Enter presses at a prompt.
+  const pasteWithConfirmGate = async (session: string, raw: string): Promise<void> => {
     if (
       confirmMultilinePaste?.enabled
-      && shouldConfirmMultilinePaste(text, { minLines: confirmMultilinePaste.minLines })
+      && shouldConfirmMultilinePaste(raw, { minLines: confirmMultilinePaste.minLines })
     ) {
       const decision = confirmMultilinePaste.requestConfirm
-        ? await confirmMultilinePaste.requestConfirm({ ...getMultilinePasteInfo(text), text })
+        ? await confirmMultilinePaste.requestConfirm({ ...getMultilinePasteInfo(raw), text: raw })
         : null;
       if (!decision || decision.action === "cancel") return;
       if (decision.action === "line-by-line") {
         // An explicitly emptied preview means "send nothing"; only a missing
         // value falls back to the original clipboard text.
-        const lineData = withFinalLineTerminator(normalizeLineEndings(decision.text ?? text));
+        const lineData = withFinalLineTerminator(normalizeLineEndings(decision.text ?? raw));
         if (!lineData) return;
-        terminalBackend.writeToSession(sessionId, lineData, {
+        terminalBackend.writeToSession(session, lineData, {
           automated: true,
           lineDelayMs: AUTO_RUN_SNIPPET_LINE_DELAY_MS,
           sensitive: isSensitiveInput?.() === true,
@@ -185,12 +184,23 @@ export async function handleTerminalClipboardPaste({
         term.focus?.();
         return;
       }
-      text = decision.text ?? text;
+      pasteTextIntoTerminal(term, decision.text ?? raw, {
+        scrollOnPaste,
+        onPasteData,
+      });
+      return;
     }
-    pasteTextIntoTerminal(term, text, {
+    pasteTextIntoTerminal(term, raw, {
       scrollOnPaste,
       onPasteData,
     });
+  };
+
+  // Prefer real text paste. Whitespace-only is deferred until after the local
+  // image probe so screenshot clipboards that also carry blank text/plain can
+  // still forward Ctrl+V for nested TUIs.
+  if (text.trim() && sessionId) {
+    await pasteWithConfirmGate(sessionId, text);
     return;
   }
 
@@ -214,11 +224,9 @@ export async function handleTerminalClipboardPaste({
   }
 
   // Preserve intentional whitespace-only pastes (indent / newline) when no
-  // local clipboard image is present.
+  // local clipboard image is present. Multi-line whitespace still goes through
+  // the confirmation gate so it cannot bypass the review dialog (#3398).
   if (text && sessionId) {
-    pasteTextIntoTerminal(term, text, {
-      scrollOnPaste,
-      onPasteData,
-    });
+    await pasteWithConfirmGate(sessionId, text);
   }
 }
