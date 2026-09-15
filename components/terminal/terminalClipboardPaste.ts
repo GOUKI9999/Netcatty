@@ -127,6 +127,12 @@ export async function pasteTextWithMultilineConfirm(
 ): Promise<void> {
   if (!sessionId) return;
   const session: string = sessionId;
+  // Snapshot the sensitive classification before any await: the confirm
+  // dialog can stay open while remote output or a reconnect clears
+  // passwordPromptActiveRef, and re-evaluating after the await would
+  // downgrade a paste made at a password prompt to nonsensitive (enabling
+  // broadcast fan-out and input logging of the secret).
+  const sensitive = isSensitiveInput?.() === true;
   // Multi-line paste confirmation (#3398): network-device CLIs (Cisco IOS,
   // Huawei VRP, H3C Comware) execute every pasted line immediately and have
   // no bracketed-paste protection, so let the user review before sending.
@@ -154,19 +160,26 @@ export async function pasteTextWithMultilineConfirm(
       terminalBackend.writeToSession(currentSessionId, lineData, {
         automated: true,
         lineDelayMs: AUTO_RUN_SNIPPET_LINE_DELAY_MS,
-        sensitive: isSensitiveInput?.() === true,
+        sensitive,
       });
       // Broadcast mode: peers must mirror the confirmed lines too. The
       // broadcast targets exclude the source session, so this does not
-      // double-send to the active session.
-      onPasteData?.(lineData, { lineDelayMs: AUTO_RUN_SNIPPET_LINE_DELAY_MS });
+      // double-send to the active session. Skipped when the paste was made
+      // at a sensitive prompt: callers guard broadcasts with the live
+      // passwordPromptActiveRef, which the dialog await may have cleared,
+      // so honor the pre-dialog snapshot here instead.
+      if (!sensitive) {
+        onPasteData?.(lineData, { lineDelayMs: AUTO_RUN_SNIPPET_LINE_DELAY_MS });
+      }
       scrollToBottomAfterProgrammaticInput?.(lineData);
       term.focus?.();
       return;
     }
     pasteTextIntoTerminal(term, decision.text ?? text, {
       scrollOnPaste,
-      onPasteData,
+      // Same post-await race as above: never fan a sensitive paste out to
+      // broadcast peers via onPasteData.
+      onPasteData: sensitive ? undefined : onPasteData,
     });
     return;
   }

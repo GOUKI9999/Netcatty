@@ -518,14 +518,21 @@ test("multi-line paste confirmation can send line by line with delay", async () 
   const pasted: string[] = [];
   const broadcast: Array<{ data: string; options?: { lineDelayMs?: number } }> = [];
   let focused = false;
+  // Simulate the dialog staying open while remote output / a reconnect
+  // clears the password prompt: the sensitive classification must be taken
+  // before the dialog opens, not re-evaluated at send time.
+  let passwordPromptActive = true;
 
   await handleTerminalClipboardPaste({
     isLocalConnection: false,
-    isSensitiveInput: () => true,
+    isSensitiveInput: () => passwordPromptActive,
     confirmMultilinePaste: {
       enabled: true,
       minLines: 2,
-      requestConfirm: async () => ({ action: "line-by-line", text: "conf t\r\nint gi0/0" }),
+      requestConfirm: async () => {
+        passwordPromptActive = false;
+        return { action: "line-by-line", text: "conf t\r\nint gi0/0" };
+      },
     },
     readClipboardText: async () => "conf t\nint gi0/0",
     onPasteData: (data, options) => {
@@ -550,10 +557,9 @@ test("multi-line paste confirmation can send line by line with delay", async () 
     data: "conf t\nint gi0/0\r",
     options: { automated: true, lineDelayMs: 250, sensitive: true },
   }]);
-  assert.deepEqual(broadcast, [{
-    data: "conf t\nint gi0/0\r",
-    options: { lineDelayMs: 250 },
-  }]);
+  // A paste made at a sensitive prompt must not be fanned out to broadcast
+  // peers, even though the dialog await cleared the live password-prompt ref.
+  assert.deepEqual(broadcast, []);
   assert.deepEqual(scrolled, ["conf t\nint gi0/0\r"]);
   assert.deepEqual(pasted, []);
   assert.equal(focused, true);
