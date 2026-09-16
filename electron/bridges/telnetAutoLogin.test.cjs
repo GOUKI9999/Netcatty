@@ -440,3 +440,42 @@ test("telnet auto-login expiry timer does not fire after a completed exchange", 
   assert.equal(completed, 1);
   assert.equal(incomplete, 0);
 });
+
+test("cancel() disables the detector and clears the expiry timer", () => {
+  let incomplete = 0;
+  let completed = 0;
+  let timerFn;
+  const timers = [];
+  const autoLogin = createTelnetAutoLogin({
+    username: "admin",
+    password: "secret",
+    write: () => {},
+    timeoutMs: 60_000,
+    onComplete: () => { completed += 1; },
+    onIncomplete: () => { incomplete += 1; },
+    setTimeout: (fn) => {
+      timerFn = fn;
+      const id = { unref: () => {} };
+      timers.push(id);
+      return id;
+    },
+    clearTimeout: (id) => {
+      const index = timers.indexOf(id);
+      if (index >= 0) timers.splice(index, 1);
+    },
+  });
+
+  // Credentials were sent, so a later expiry would report an incomplete
+  // exchange. Cancelling (as when the session is displaced by a reconnect)
+  // must disarm that path entirely.
+  autoLogin.handleText("Username: ");
+  autoLogin.handleText("\r\nPassword: ");
+  autoLogin.cancel();
+
+  timerFn();
+  autoLogin.handleText("\r\nPassword: ");
+
+  assert.equal(completed, 0);
+  assert.equal(incomplete, 0);
+  assert.deepEqual(timers, []);
+});

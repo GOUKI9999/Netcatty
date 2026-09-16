@@ -206,6 +206,13 @@ function createTelnetAutoLogin(options = {}) {
       clearExpiryTimer();
       notifyUserInput();
     },
+    // Tear down the detector without emitting anything: used when the owning
+    // session is displaced by a reconnect, so the stale expiry timer can no
+    // longer fire onIncomplete against the replacement session.
+    cancel() {
+      disabled = true;
+      clearExpiryTimer();
+    },
   };
 }
 

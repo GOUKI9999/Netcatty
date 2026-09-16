@@ -1345,13 +1345,16 @@ async function startSerialSession(event, options) {
           || typeof options.password === "string";
         if (hasSerialAutoLoginCredentials) {
           const emitAutoLoginEvent = (channel) => {
-            const liveSession = sessions.get(sessionId);
-            const contents = electronModule.webContents.fromId(
-              liveSession?.webContentsId ?? session.webContentsId,
-            );
+            // Guard against this session having been displaced by a serial
+            // reconnect that reused the same sessionId: the replacement owns
+            // the registry slot and its bootEpoch, so a stale event stamped
+            // with the new epoch would make the renderer cancel the
+            // replacement session's pending startup command.
+            if (sessions.get(sessionId) !== session) return;
+            const contents = electronModule.webContents.fromId(session.webContentsId);
             contents?.send(channel, {
               sessionId,
-              bootEpoch: liveSession?.bootEpoch ?? options.bootEpoch,
+              bootEpoch: session.bootEpoch ?? options.bootEpoch,
             });
           };
           session.autoLogin = createTelnetAutoLogin({
