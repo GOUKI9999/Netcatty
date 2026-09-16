@@ -204,6 +204,68 @@ test("startSerial waits for auto-login before running the startup command", asyn
   assert.deepEqual(executedCommands, ["show version"]);
 });
 
+test("startSerial schedules the startup command when auto-login completes before attach", async () => {
+  const writtenCommands: string[] = [];
+  const executedCommands: string[] = [];
+  let autoLoginComplete: ((evt: { sessionId: string }) => void) | null = null;
+
+  const backend = buildBackend({
+    startSerialSession: async () => {
+      // The login exchange completes before the startSerialSession promise
+      // resolves, so the completion event fires while the session is still
+      // unattached. The startup command must be scheduled after attach, not
+      // dropped against the unset session ref.
+      autoLoginComplete?.({ sessionId: "session-1" });
+      return "serial-session";
+    },
+    onTelnetAutoLoginComplete: (
+      _sessionId: string,
+      cb: (evt: { sessionId: string }) => void,
+    ) => {
+      autoLoginComplete = cb;
+      return noop;
+    },
+    onTelnetAutoLoginCancelled: () => noop,
+    writeToSession: (_sessionId: string, data: string) => {
+      writtenCommands.push(data);
+    },
+  });
+
+  const ctx = buildCtx(backend, {
+    host: {
+      id: "serial-1",
+      hostname: "/dev/ttyUSB0",
+      protocol: "serial",
+      username: "admin",
+      password: "secret",
+      startupCommand: "show version",
+    },
+    onCommandExecuted: (command: string) => {
+      executedCommands.push(command);
+    },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSerial(term as never);
+
+  await Promise.race([
+    new Promise<void>((resolve) => {
+      const tick = () => {
+        if (writtenCommands.length > 0) {
+          resolve();
+          return;
+        }
+        setTimeout(tick, 20);
+      };
+      tick();
+    }),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Timed out waiting for startup command")), 2000),
+    ),
+  ]);
+  assert.deepEqual(writtenCommands, ["show version\r"]);
+  assert.deepEqual(executedCommands, ["show version"]);
+});
+
 test("startSerial runs the startup command without waiting when no credentials are saved", async () => {
   const writtenCommands: string[] = [];
   const backend = buildBackend({

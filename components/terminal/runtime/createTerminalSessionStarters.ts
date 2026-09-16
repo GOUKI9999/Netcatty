@@ -1959,6 +1959,13 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     let cancelPendingStartupCommand: (() => void) | undefined;
     let autoLoginFallbackTimer: ReturnType<typeof setTimeout> | undefined;
     let serialSessionId = ctx.sessionId;
+    // A login exchange can complete before the startSerialSession promise
+    // resolves, so the completion event may arrive while the session is not
+    // attached yet. Record it and schedule the startup command only after
+    // attach, otherwise scheduleStartupCommand marks it as run and its timer
+    // then drops it against the unset ctx.sessionRef.current.
+    let autoLoginCompletedBeforeAttach = false;
+    let autoLoginAttached = false;
     const clearAutoLoginFallbackTimer = () => {
       if (autoLoginFallbackTimer) {
         clearTimeout(autoLoginFallbackTimer);
@@ -2032,6 +2039,11 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
               return;
             }
             clearAutoLoginFallbackTimer();
+            if (!autoLoginAttached) {
+              disposeAutoLoginListener();
+              autoLoginCompletedBeforeAttach = true;
+              return;
+            }
             scheduleStartupAfterAutoLogin();
           },
         );
@@ -2084,17 +2096,22 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       }
 
       // Serial connection is established once the session is attached to the terminal.
+      autoLoginAttached = true;
       ctx.updateStatus("connected");
       ctx.setProgressValue(100);
       writeTerminalLine(ctx, term, `[Connected to ${ctx.serialConfig.path} at ${ctx.serialConfig.baudRate} baud]`);
 
       if (waitsForAutoLogin) {
+        if (autoLoginCompletedBeforeAttach) {
+          // Login already completed before the session attached; schedule now
+          // that ctx.sessionRef.current points at this session.
+          scheduleStartupAfterAutoLogin();
+          return;
+        }
         // Arm the fallback only now that the port is open and the session is
         // attached: the main-process 60s auto-login window starts when the
         // port's open callback creates the detector, so a slow/busy port open
-        // must not consume the fallback budget — and a pre-attach fire would
-        // schedule the startup command against an unattached session, which
-        // drops the command and marks it as already run.
+        // must not consume the fallback budget.
         autoLoginFallbackTimer = setTimeout(() => {
           autoLoginFallbackTimer = undefined;
           if (!disposeAutoLoginComplete) return;
