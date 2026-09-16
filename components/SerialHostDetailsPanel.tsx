@@ -81,6 +81,11 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
   const [label, setLabel] = useState(initialData.label);
   const [username, setUsername] = useState(initialData.username || '');
   const [password, setPassword] = useState(initialData.password || '');
+  // Tracks whether the user edited the password field this session. An empty
+  // password is a meaningful serial credential (the auto-login detector
+  // submits a blank line at a Password prompt), so an explicit edit to blank
+  // must be saved as '' while an untouched field preserves the stored value.
+  const [passwordChanged, setPasswordChanged] = useState(false);
   const [selectedPort, setSelectedPort] = useState(initialData.hostname || initialData.serialConfig?.path || '');
   const [baudRate, setBaudRate] = useState(initialData.serialConfig?.baudRate || initialData.port || 115200);
   const [dataBits, setDataBits] = useState<5 | 6 | 7 | 8>(initialData.serialConfig?.dataBits || 8);
@@ -146,9 +151,10 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
       username: username.trim() || undefined,
       // An empty password is meaningful for serial auto-login: the detector
       // distinguishes an absent password from a present empty string and
-      // submits the required blank line at a Password prompt. Only clear the
-      // credential when it was previously set; preserve a saved blank password.
-      password: password || (initialData.password === '' ? '' : undefined),
+      // submits the required blank line at a Password prompt. An explicit edit
+      // saves exactly what the user typed (including a blank line); an
+      // untouched field preserves the stored credential as-is.
+      password: passwordChanged ? password : (initialData.password ?? undefined),
       tags,
       group,
       charset,
@@ -300,7 +306,10 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
               id="serial-password"
               value={password}
               type={showPassword ? 'text' : 'password'}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                setPasswordChanged(true);
+              }}
               placeholder={t('serial.field.password')}
               autoComplete="off"
               className="pr-10"
