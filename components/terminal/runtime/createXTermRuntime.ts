@@ -2139,6 +2139,16 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
             } as unknown as KeyboardEvent
           : e;
         const kittyEvent = toKittyKeyboardEvent(interruptEventForKitty);
+        if (macCommandPeriodInterrupt) {
+          // The synthesized event's code ("KeyC") is the physical QWERTY
+          // position of the chord key, so toKittyKeyboardEvent()'s layout
+          // lookup returns that position's character on non-QWERTY layouts
+          // (e.g. "n" under Dvorak) and getUnicodeKeyCode() prioritizes it,
+          // encoding the interrupt as the wrong key instead of Ctrl+C's 99
+          // — a broadcast peer would then suppress the legacy \x03 fallback
+          // and never be interrupted. Force the layout-independent identity.
+          kittyEvent.unshiftedKey = "c";
+        }
         const identity = kittyKeyIdentity(interruptEventForKitty);
         // The normalized press shares the Ctrl+C event identity (KeyC) with a
         // possibly outstanding physical KeyC press; record it under a dedicated
