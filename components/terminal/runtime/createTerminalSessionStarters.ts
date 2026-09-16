@@ -1947,11 +1947,99 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       return;
     }
 
+    // Serial auto-login (#3417): mirror Telnet — the main process answers
+    // Login/Password prompts with the credentials saved on the host. When a
+    // startup command is pending, defer it until auto-login finishes so it is
+    // not typed at a login prompt. Quiet devices (no prompt, no banner) never
+    // emit a completion event, so fall back after the main-process auto-login
+    // window (60s) plus margin.
+    const SERIAL_AUTO_LOGIN_FALLBACK_MS = 65_000;
+    let disposeAutoLoginComplete: (() => void) | undefined;
+    let disposeAutoLoginCancelled: (() => void) | undefined;
+    let cancelPendingStartupCommand: (() => void) | undefined;
+    let autoLoginFallbackTimer: ReturnType<typeof setTimeout> | undefined;
+    let serialSessionId = ctx.sessionId;
+    const clearAutoLoginFallbackTimer = () => {
+      if (autoLoginFallbackTimer) {
+        clearTimeout(autoLoginFallbackTimer);
+        autoLoginFallbackTimer = undefined;
+      }
+    };
+    const disposeAutoLoginListener = () => {
+      disposeAutoLoginComplete?.();
+      disposeAutoLoginComplete = undefined;
+    };
+    const disposeAutoLoginCancelListener = () => {
+      disposeAutoLoginCancelled?.();
+      disposeAutoLoginCancelled = undefined;
+    };
+    const cleanupSerialStartupWait = () => {
+      clearAutoLoginFallbackTimer();
+      disposeAutoLoginListener();
+      disposeAutoLoginCancelListener();
+      cancelPendingStartupCommand?.();
+      cancelPendingStartupCommand = undefined;
+    };
+    const scheduleStartupAfterAutoLogin = () => {
+      disposeAutoLoginListener();
+      cancelPendingStartupCommand = scheduleStartupCommand(ctx, term, serialSessionId, () => {
+        cancelPendingStartupCommand = undefined;
+        disposeAutoLoginCancelListener();
+      });
+    };
+
     try {
       logger.info("[Serial] Starting serial session", {
         port: ctx.serialConfig.path,
         baudRate: ctx.serialConfig.baudRate,
       });
+
+      const serialUsername = (ctx.host.username ?? "").trim();
+      const serialPassword = sanitizeCredentialValue(ctx.host.password);
+      const hasSerialAutoLoginCredentials = Boolean(
+        serialUsername || serialPassword !== undefined,
+      );
+      const commandToRun = resolveStartupCommand(ctx);
+      const waitsForAutoLogin = Boolean(
+        commandToRun &&
+        hasSerialAutoLoginCredentials &&
+        ctx.terminalBackend.onTelnetAutoLoginComplete,
+      );
+      if (waitsForAutoLogin) {
+        disposeAutoLoginComplete = ctx.terminalBackend.onTelnetAutoLoginComplete?.(
+          ctx.sessionId,
+          (evt) => {
+            if (
+              Number.isFinite(bootEpoch)
+              && Number.isFinite(evt?.bootEpoch)
+              && evt.bootEpoch !== bootEpoch
+            ) {
+              return;
+            }
+            clearAutoLoginFallbackTimer();
+            scheduleStartupAfterAutoLogin();
+          },
+        );
+        disposeAutoLoginCancelled = ctx.terminalBackend.onTelnetAutoLoginCancelled?.(
+          ctx.sessionId,
+          (evt) => {
+            if (
+              Number.isFinite(bootEpoch)
+              && Number.isFinite(evt?.bootEpoch)
+              && evt.bootEpoch !== bootEpoch
+            ) {
+              return;
+            }
+            cleanupSerialStartupWait();
+          },
+        );
+        autoLoginFallbackTimer = setTimeout(() => {
+          autoLoginFallbackTimer = undefined;
+          if (!disposeAutoLoginComplete) return;
+          if ((ctx.bootEpochRef?.current ?? 0) !== bootEpoch) return;
+          scheduleStartupAfterAutoLogin();
+        }, SERIAL_AUTO_LOGIN_FALLBACK_MS);
+      }
 
       const id = await ctx.terminalBackend.startSerialSession({
         sessionId: ctx.sessionId,
@@ -1964,7 +2052,11 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         charset: ctx.host.charset,
         sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
         bootEpoch,
+        ...(hasSerialAutoLoginCredentials
+          ? { username: serialUsername || undefined, password: serialPassword }
+          : {}),
       });
+      serialSessionId = id;
 
       if (!tryAttachSessionToTerminal(ctx, term, id, {
         isCurrentAttempt,
@@ -1973,9 +2065,11 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           `\r\n[serial port closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
         // Convert lone LF to CRLF to prevent "staircase effect" in serial terminals
         convertLfToCrlf: true,
+        onExit: () => cleanupSerialStartupWait(),
       })) {
         // Only the current attempt may clear UI; a stale attach must not
         // disconnect a newer reconnect that already re-armed boot.
+        cleanupSerialStartupWait();
         if (isCurrentAttempt()) abortSessionStartAfterUnmount();
         return;
       }
@@ -1984,7 +2078,13 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       ctx.updateStatus("connected");
       ctx.setProgressValue(100);
       writeTerminalLine(ctx, term, `[Connected to ${ctx.serialConfig.path} at ${ctx.serialConfig.baudRate} baud]`);
+
+      if (waitsForAutoLogin) {
+        return;
+      }
+      scheduleStartupCommand(ctx, term, id);
     } catch (err) {
+      cleanupSerialStartupWait();
       if (ignoreStaleAttemptUi()) return;
       const message = err instanceof Error ? err.message : String(err);
       ctx.setError(message);

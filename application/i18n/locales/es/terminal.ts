@@ -827,6 +827,9 @@ export const esTerminalMessages: Messages = {
   'serial.field.configLabelPlaceholder': 'p. ej., Arduino Uno',
   'serial.connectAndSave': 'Conectar y guardar',
   'serial.edit.title': 'Configuración del puerto serial',
+  'serial.field.username': 'Usuario',
+  'serial.field.password': 'Contraseña',
+  'serial.field.autoLoginDesc': 'Si se establecen, los mensajes Login/Password de la consola serial se responden automáticamente con estas credenciales guardadas.',
 
   // Keyboard Interactive Authentication (2FA/MFA)
   'keyboard.interactive.title': 'Se requiere autenticación',

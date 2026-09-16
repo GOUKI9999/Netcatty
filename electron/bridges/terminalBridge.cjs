@@ -1310,6 +1310,8 @@ async function startSerialSession(event, options) {
           onData(buf) {
             const decoded = serialDecoderRef.current.write(buf);
             if (!decoded) return;
+            const liveSession = sessions.get(sessionId);
+            liveSession?.autoLogin?.handleText(decoded);
             const contents = electronModule.webContents.fromId(session.webContentsId);
             emitTerminalSessionData(contents, sessionId, decoded, {
               session,
@@ -1333,6 +1335,41 @@ async function startSerialSession(event, options) {
           label: "Serial",
         });
         session.zmodemSentry = serialZmodemSentry;
+
+        // Serial auto-login (issue #3417): reuse the Telnet login-assist
+        // detector to answer Login/Password prompts with the credentials saved
+        // on the host. Writes go straight to the port (not writeToSession) so
+        // they are not treated as user input and cannot cancel themselves.
+        const hasSerialAutoLoginCredentials =
+          (typeof options.username === "string" && options.username.trim().length > 0)
+          || typeof options.password === "string";
+        if (hasSerialAutoLoginCredentials) {
+          const emitAutoLoginEvent = (channel) => {
+            const liveSession = sessions.get(sessionId);
+            const contents = electronModule.webContents.fromId(
+              liveSession?.webContentsId ?? session.webContentsId,
+            );
+            contents?.send(channel, {
+              sessionId,
+              bootEpoch: liveSession?.bootEpoch ?? options.bootEpoch,
+            });
+          };
+          session.autoLogin = createTelnetAutoLogin({
+            username: options.username,
+            password: options.password,
+            write(data) {
+              try {
+                serialPort.write(encodeTerminalInput(data, session.encoding));
+              } catch { /* port closing — ignore */ }
+            },
+            onComplete() {
+              emitAutoLoginEvent("netcatty:telnet:auto-login-complete");
+            },
+            onUserInput() {
+              emitAutoLoginEvent("netcatty:telnet:auto-login-cancelled");
+            },
+          });
+        }
 
         serialPort.on('data', (data) => {
           if (sessions.get(sessionId) !== session) return;
@@ -1497,7 +1534,7 @@ function writeToSessionNow(payload, data, logRewrite = payload.logRewrite) {
   }
 
   try {
-    if (session.type === 'telnet-native' && !payload.automated) {
+    if ((session.type === 'telnet-native' || session.type === 'serial') && !payload.automated) {
       session.autoLogin?.handleUserInput();
     }
 

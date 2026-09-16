@@ -827,6 +827,9 @@ export const enTerminalMessages: Messages = {
   'serial.field.configLabelPlaceholder': 'e.g. Arduino Uno',
   'serial.connectAndSave': 'Connect & Save',
   'serial.edit.title': 'Serial Port Settings',
+  'serial.field.username': 'Username',
+  'serial.field.password': 'Password',
+  'serial.field.autoLoginDesc': 'When set, Login/Password prompts on the serial console are answered automatically with these saved credentials.',
 
   // Keyboard Interactive Authentication (2FA/MFA)
   'keyboard.interactive.title': 'Authentication Required',

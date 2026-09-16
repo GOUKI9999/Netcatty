@@ -144,6 +144,9 @@ declare global {
       stopBits?: 1 | 1.5 | 2;
       parity?: 'none' | 'even' | 'odd' | 'mark' | 'space';
       flowControl?: 'none' | 'xon/xoff' | 'rts/cts';
+      // Optional auto-login credentials saved on the host (#3417)
+      username?: string;
+      password?: string;
       charset?: string;
       sessionLog?: { enabled: boolean; directory: string; format: string; timestampsEnabled?: boolean };
     }): Promise<string>;

@@ -834,6 +834,9 @@ export const ruTerminalMessages: Messages = {
   'serial.field.configLabelPlaceholder': 'например, Arduino Uno',
   'serial.connectAndSave': 'Подключить и сохранить',
   'serial.edit.title': 'Настройки последовательного порта',
+  'serial.field.username': 'Имя пользователя',
+  'serial.field.password': 'Пароль',
+  'serial.field.autoLoginDesc': 'Если задано, запросы Login/Password в последовательной консоли автоматически заполняются этими сохранёнными учётными данными.',
 
   // Keyboard Interactive Authentication (2FA/MFA)
   'keyboard.interactive.title': 'Требуется аутентификация',
