@@ -1490,9 +1490,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   const broadcastForwardedKeys = new Map<string, KittyKeyboardForwardedPress>();
   const win32BroadcastForwardedKeys = new Map<string, KittyKeyboardForwardedPress>();
   // ⌘. interrupt presses are recorded under their normalized Ctrl+C identity
-  // (KeyC) so broadcast legacy pairing stays matched (#3408). Map the physical
-  // chord identity (Period) to it so the later keyup can pair the release.
+  // (KeyC) so broadcast legacy pairing stays matched (#3408), but under a
+  // dedicated map key so they cannot clobber an outstanding physical KeyC
+  // press; map the physical chord identity (Period) to it so the later keyup
+  // can pair the release.
   const kittyNormalizedPressAliases = new Map<string, string>();
+  const kittyNormalizedPressIdentity = (identity: string): string =>
+    `${identity} mac-period-interrupt`;
   const broadcastEncodedKeys = new Set<string>();
   const broadcastLegacySuppressedKeys = new Set<string>();
   const kittyKeyIdentity = (event: KeyboardEvent): string => event.code || event.key;
@@ -1678,8 +1682,12 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
    */
   const releaseForwardedKittyPress = (
     event: Pick<KittyKeyboardEvent, "code" | "key"> & KittyKeyboardEvent,
+    identityOverride?: string,
   ): boolean => {
-    const identity = event.code || event.key;
+    // The ⌘. interrupt press is keyed independently from its normalized
+    // Ctrl+C event identity, so its release must delete the entry it was
+    // stored under rather than the physical key's (#3408).
+    const identity = identityOverride ?? (event.code || event.key);
     const forwardedPress = broadcastForwardedKeys.get(identity);
     if (forwardedPress) {
       broadcastForwardedKeys.delete(identity);
@@ -1709,7 +1717,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
    */
   const resolveKittyNormalizedPressRelease = (
     physicalEvent: KeyboardEvent,
-  ): KittyKeyboardEvent | null => {
+  ): { event: KittyKeyboardEvent; identity: string } | null => {
     const physicalIdentity = kittyKeyIdentity(physicalEvent);
     const normalizedIdentity = kittyNormalizedPressAliases.get(physicalIdentity);
     if (!normalizedIdentity) return null;
@@ -1722,7 +1730,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     // release (#3408).
     kittyNormalizedPressAliases.delete(physicalIdentity);
     if (!forwardedPress) return null;
-    return forwardedPress.event;
+    return { event: forwardedPress.event, identity: normalizedIdentity };
   };
 
   term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
@@ -1775,6 +1783,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       // key they consumed (or drop the keyup), and an exact key match left the
       // deferral armed so every later keypress was swallowed (#3103).
       let releaseEvent: KeyboardEvent = e;
+      let aliasedReleaseIdentity: string | undefined;
       if (
         imeTextInputDeferredKey !== null &&
         shouldFlushDeferredImeTextInputOnKeyUp(imeTextInputDeferredKey, e)
@@ -1803,13 +1812,16 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       }
       // A ⌘. interrupt press was recorded under its normalized Ctrl+C
       // identity; pair the physical Period release from the stored event
-      // instead of leaving the press unmatched (#3408).
-      const aliasedReleaseEvent = resolveKittyNormalizedPressRelease(e);
-      if (aliasedReleaseEvent) {
+      // instead of leaving the press unmatched (#3408). The release must
+      // delete the press under its dedicated key so an outstanding physical
+      // KeyC press is left intact (#3409).
+      const aliasedRelease = resolveKittyNormalizedPressRelease(e);
+      if (aliasedRelease) {
         releaseEvent = {
-          ...aliasedReleaseEvent,
+          ...aliasedRelease.event,
           type: "keyup",
         } as unknown as KeyboardEvent;
+        aliasedReleaseIdentity = aliasedRelease.identity;
       }
       const identity = kittyKeyIdentity(releaseEvent);
       const hasForwardedWin32KeyDown = win32InputModeForwardedKeys.delete(identity);
@@ -1817,7 +1829,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       if (term.modes.win32InputMode) {
         // Broadcast peers may still need a paired Kitty release for a keydown
         // consumed by a Netcatty action (notably the urgent Ctrl+C path).
-        releaseForwardedKittyPress(toKittyKeyboardEvent(releaseEvent));
+        releaseForwardedKittyPress(toKittyKeyboardEvent(releaseEvent), aliasedReleaseIdentity);
         kittyForwardedKeys.delete(identity);
         // Only let xterm emit a Win32 key-up when its matching keydown was
         // previously handed to xterm. Netcatty shortcuts, sudo controls and
@@ -1833,7 +1845,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         };
         return true;
       }
-      if (releaseForwardedKittyPress(toKittyKeyboardEvent(releaseEvent))) {
+      if (releaseForwardedKittyPress(toKittyKeyboardEvent(releaseEvent), aliasedReleaseIdentity)) {
         e.preventDefault();
         e.stopPropagation();
         return false;
@@ -2102,11 +2114,19 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           : e;
         const kittyEvent = toKittyKeyboardEvent(interruptEventForKitty);
         const identity = kittyKeyIdentity(interruptEventForKitty);
-        if (macCommandPeriodInterrupt && identity !== kittyKeyIdentity(e)) {
+        // The normalized press shares the Ctrl+C event identity (KeyC) with a
+        // possibly outstanding physical KeyC press; record it under a dedicated
+        // map key so the Period keyup releases (and deletes) only the
+        // interrupt press instead of the held physical key's entry (#3409).
+        const pressIdentity =
+          macCommandPeriodInterrupt && identity !== kittyKeyIdentity(e)
+            ? kittyNormalizedPressIdentity(identity)
+            : identity;
+        if (pressIdentity !== identity) {
           // The physical release will arrive under the Period identity while
           // the press was recorded as the normalized Ctrl+C event; pair them
           // at keyup so the interrupt release is not lost (#3408).
-          kittyNormalizedPressAliases.set(kittyKeyIdentity(e), identity);
+          kittyNormalizedPressAliases.set(kittyKeyIdentity(e), pressIdentity);
         }
         if (
           !term.modes.win32InputMode &&
@@ -2115,7 +2135,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         ) {
           upsertKittyKeyboardForwardedPress(
             kittyForwardedKeys,
-            identity,
+            pressIdentity,
             kittyEvent,
             [],
           );
@@ -2124,7 +2144,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         if (forwarded) {
           upsertKittyKeyboardForwardedPress(
             broadcastForwardedKeys,
-            identity,
+            pressIdentity,
             kittyEvent,
             forwarded.targetSessionIds,
           );

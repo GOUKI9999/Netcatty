@@ -1029,3 +1029,33 @@ test("multi-character plain text goes out as per-character writes (#3077)", asyn
   assert.match(writeSite, /ctx\.onOutputTriggerUserInputRef\?\.current\?\.\(outData\)/);
   assert.match(source, /onBroadcastInput\?\.\(broadcastData, ctx\.sessionId\)/);
 });
+
+test("⌘. interrupt press is keyed apart from an outstanding physical KeyC press (#3409)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("./createXTermRuntime.ts", import.meta.url), "utf8");
+
+  // The normalized Ctrl+C press shares its event identity with a possibly
+  // outstanding physical KeyC press, so it must be recorded under a dedicated
+  // map key: upserting under "KeyC" replaced the held key's press and the
+  // Period keyup deleted that shared entry while C was still down.
+  assert.match(
+    source,
+    /const pressIdentity =\s*macCommandPeriodInterrupt && identity !== kittyKeyIdentity\(e\)\s*\?\s*kittyNormalizedPressIdentity\(identity\)\s*:\s*identity,?/,
+  );
+  assert.match(source, /kittyNormalizedPressAliases\.set\(kittyKeyIdentity\(e\), pressIdentity\)/);
+  assert.match(
+    source,
+    /upsertKittyKeyboardForwardedPress\(\s*kittyForwardedKeys,\s*pressIdentity,/,
+  );
+  assert.match(
+    source,
+    /upsertKittyKeyboardForwardedPress\(\s*broadcastForwardedKeys,\s*pressIdentity,/,
+  );
+  // The aliased Period keyup releases the interrupt press under its dedicated
+  // key, leaving the physical KeyC press entry intact.
+  assert.match(source, /aliasedReleaseIdentity = aliasedRelease\.identity/);
+  assert.match(
+    source,
+    /releaseForwardedKittyPress\(toKittyKeyboardEvent\(releaseEvent\), aliasedReleaseIdentity\)/,
+  );
+});
