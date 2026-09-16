@@ -1058,4 +1058,44 @@ test("⌘. interrupt press is keyed apart from an outstanding physical KeyC pres
     source,
     /releaseForwardedKittyPress\(toKittyKeyboardEvent\(releaseEvent\), aliasedReleaseIdentity\)/,
   );
+  // The dedicated identity crosses the broadcast boundary: peers key their
+  // pairing state from it, so the interrupt cannot collapse with an
+  // outstanding physical KeyC press on legacy or Kitty peers (#3409).
+  assert.match(
+    source,
+    /broadcastKittyInput\(\{\s*kind: "key",\s*event: kittyEvent,\s*keyIdentity: pressIdentity,\s*\}\)/,
+  );
+  assert.match(
+    source,
+    /broadcastKittyInput\(\{\s*kind: "legacy",\s*data: "\\x03",\s*keyIdentity: pressIdentity,/,
+  );
+  // The paired release carries the identity the press was recorded under.
+  assert.match(
+    source,
+    /\{ kind: "key", event, keyIdentity: identity \}/,
+  );
+  // The aliased release's Win32 lookup uses the physical key's identity so it
+  // neither consumes the held KeyC's native pairing nor leaks a native Ctrl+C
+  // keyup for a keydown ConPTY never received (#3409).
+  assert.match(
+    source,
+    /const win32LookupIdentity =\s*aliasedReleaseIdentity !== undefined \? physicalIdentity : identity;/,
+  );
+  assert.match(
+    source,
+    /const hasForwardedWin32KeyDown = win32InputModeForwardedKeys\.delete\(win32LookupIdentity\);/,
+  );
+});
+
+test("⌘. interrupt yields to a user-assigned snippet or shortcut chord (#3409)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("./createXTermRuntime.ts", import.meta.url), "utf8");
+
+  // The snippet/app-shortcut editors accept ⌘. (their conflict checks only
+  // cover configured bindings), so the hard-coded interrupt must give a
+  // configured chord precedence instead of silently swallowing it (#3409).
+  assert.match(
+    source,
+    /const macCommandPeriodInterrupt =\s*!hasCopyableSelection\s*&& isMacPlatform\(\)\s*&& isMacCommandPeriodInterruptChord\(e\)\s*&& !\(ctx\.snippetsRef\?\.current \?\? \[\]\)\.some\(\(snippet\) => \(\s*snippet\.shortkey && matchesKeyBinding\(e, snippet\.shortkey, isMac\)\s*\)\)\s*&& !\(currentScheme !== "disabled"\s*&& checkAppShortcut\(e, ctx\.keyBindingsRef\.current, isMac\) !== null\);/,
+  );
 });

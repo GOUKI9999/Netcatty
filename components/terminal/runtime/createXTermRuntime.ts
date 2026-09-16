@@ -1692,7 +1692,10 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     if (forwardedPress) {
       broadcastForwardedKeys.delete(identity);
       broadcastKittyInput(
-        { kind: "key", event },
+        // Carry the identity the press was recorded under so peers pair this
+        // release with that press instead of the event's physical code — the
+        // ⌘. interrupt press lives under a dedicated normalized key (#3409).
+        { kind: "key", event, keyIdentity: identity },
         true,
         forwardedPress.targetSessionIds,
       );
@@ -1823,14 +1826,23 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         } as unknown as KeyboardEvent;
         aliasedReleaseIdentity = aliasedRelease.identity;
       }
+      // The aliased ⌘. release must be looked up under the physical key's
+      // identity: the interrupt keydown was consumed by the shortcut and
+      // never handed to ConPTY, so the rewritten KeyC identity must not
+      // consume an outstanding physical KeyC press's Win32 entry (which
+      // would release C natively and drop the real C keyup later), and the
+      // aliased interrupt release must stay orphaned (#3409).
+      const physicalIdentity = kittyKeyIdentity(e);
       const identity = kittyKeyIdentity(releaseEvent);
-      const hasForwardedWin32KeyDown = win32InputModeForwardedKeys.delete(identity);
+      const win32LookupIdentity =
+        aliasedReleaseIdentity !== undefined ? physicalIdentity : identity;
+      const hasForwardedWin32KeyDown = win32InputModeForwardedKeys.delete(win32LookupIdentity);
       if (broadcastLegacyDataPending === identity) clearBroadcastLegacyDataPending();
       if (term.modes.win32InputMode) {
         // Broadcast peers may still need a paired Kitty release for a keydown
         // consumed by a Netcatty action (notably the urgent Ctrl+C path).
         releaseForwardedKittyPress(toKittyKeyboardEvent(releaseEvent), aliasedReleaseIdentity);
-        kittyForwardedKeys.delete(identity);
+        kittyForwardedKeys.delete(win32LookupIdentity);
         // Only let xterm emit a Win32 key-up when its matching keydown was
         // previously handed to xterm. Netcatty shortcuts, sudo controls and
         // autocomplete consume their keydown and must not leak an orphaned
@@ -2037,10 +2049,24 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     const urgentInterrupt =
       (!kittySequenceForKeyDown || kittySequenceForKeyDown === "\x03") &&
       shouldUseUrgentTerminalInterrupt(e, { hasSelection: hasCopyableSelection });
+    const currentScheme = ctx.hotkeySchemeRef.current;
+    // Use shared utility for platform detection when hotkey scheme is disabled
+    const isMac = currentScheme === "mac" || (currentScheme === "disabled" && isMacPlatform());
     // macOS Terminal convention: ⌘. interrupts the running command like
-    // Ctrl+C (#3408). Only when nothing is selected so copy wins first.
+    // Ctrl+C (#3408). Only when nothing is selected so copy wins first. A
+    // user-assigned snippet or configured shortcut on this chord keeps
+    // precedence: the editors accept ⌘. (their conflict check only covers
+    // configured bindings), so the hard-coded interrupt must not silently
+    // swallow a chord the user actually assigned (#3409).
     const macCommandPeriodInterrupt =
-      !hasCopyableSelection && isMacPlatform() && isMacCommandPeriodInterruptChord(e);
+      !hasCopyableSelection
+      && isMacPlatform()
+      && isMacCommandPeriodInterruptChord(e)
+      && !(ctx.snippetsRef?.current ?? []).some((snippet) => (
+        snippet.shortkey && matchesKeyBinding(e, snippet.shortkey, isMac)
+      ))
+      && !(currentScheme !== "disabled"
+        && checkAppShortcut(e, ctx.keyBindingsRef.current, isMac) !== null);
     if (urgentInterrupt || macCommandPeriodInterrupt) {
       const id = ctx.sessionRef.current;
       if (id && ctx.statusRef.current === "connected") {
@@ -2140,7 +2166,15 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
             [],
           );
         }
-        const forwarded = broadcastKittyInput({ kind: "key", event: kittyEvent });
+        // The dedicated press identity must cross the broadcast boundary:
+        // peers key their pairing state from it, so broadcasting only the
+        // normalized event would collapse the interrupt with an outstanding
+        // physical KeyC press on every peer (#3409).
+        const forwarded = broadcastKittyInput({
+          kind: "key",
+          event: kittyEvent,
+          keyIdentity: pressIdentity,
+        });
         if (forwarded) {
           upsertKittyKeyboardForwardedPress(
             broadcastForwardedKeys,
@@ -2151,7 +2185,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           broadcastKittyInput({
             kind: "legacy",
             data: "\x03",
-            keyIdentity: identity,
+            keyIdentity: pressIdentity,
             urgentInterrupt: true,
           });
         }
@@ -2159,10 +2193,6 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         return false;
       }
     }
-
-    const currentScheme = ctx.hotkeySchemeRef.current;
-    // Use shared utility for platform detection when hotkey scheme is disabled
-    const isMac = currentScheme === "mac" || (currentScheme === "disabled" && isMacPlatform());
 
     // Check snippet shortcuts first (even if hotkeys are disabled)
     const snippets = ctx.snippetsRef?.current;
