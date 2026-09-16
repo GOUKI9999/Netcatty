@@ -161,7 +161,10 @@ import {
   type TerminalOutputHistoryPreview,
 } from "./terminalOutputHistory";
 import { shouldPassThroughCopyShortcut } from "./terminalCopyShortcut";
-import { shouldUseUrgentTerminalInterrupt } from "./terminalInterruptShortcut";
+import {
+  isMacCommandPeriodInterruptChord,
+  shouldUseUrgentTerminalInterrupt,
+} from "./terminalInterruptShortcut";
 import {
   createTerminalInterruptTrace,
   logTerminalInterruptTrace,
@@ -1981,10 +1984,14 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       kittyKeyboardProtocolEnabled
         ? encodeKittyKeyEvent(kittyKeyboardMode, toKittyKeyboardEvent(e))
         : null;
-    if (
+    const urgentInterrupt =
       (!kittySequenceForKeyDown || kittySequenceForKeyDown === "\x03") &&
-      shouldUseUrgentTerminalInterrupt(e, { hasSelection: hasCopyableSelection })
-    ) {
+      shouldUseUrgentTerminalInterrupt(e, { hasSelection: hasCopyableSelection });
+    // macOS Terminal convention: ⌘. interrupts the running command like
+    // Ctrl+C (#3408). Only when nothing is selected so copy wins first.
+    const macCommandPeriodInterrupt =
+      !hasCopyableSelection && isMacPlatform() && isMacCommandPeriodInterruptChord(e);
+    if (urgentInterrupt || macCommandPeriodInterrupt) {
       const id = ctx.sessionRef.current;
       if (id && ctx.statusRef.current === "connected") {
         const rendererKeyAt = Date.now();

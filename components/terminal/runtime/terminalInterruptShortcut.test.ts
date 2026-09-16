@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { shouldUseUrgentTerminalInterrupt } from "./terminalInterruptShortcut";
+import {
+  isMacCommandPeriodInterruptChord,
+  shouldUseUrgentTerminalInterrupt,
+} from "./terminalInterruptShortcut";
 
 function key(overrides: Partial<KeyboardEvent> = {}): KeyboardEvent {
   return {
@@ -39,4 +42,39 @@ test("urgent interrupt leaves copy shortcuts and modified chords alone", () => {
   assert.equal(shouldUseUrgentTerminalInterrupt(key({ shiftKey: true }), { hasSelection: false }), false);
   assert.equal(shouldUseUrgentTerminalInterrupt(key({ metaKey: true }), { hasSelection: false }), false);
   assert.equal(shouldUseUrgentTerminalInterrupt(key({ altKey: true }), { hasSelection: false }), false);
+});
+
+test("mac Command+Period chord is recognized as an interrupt", () => {
+  assert.equal(
+    isMacCommandPeriodInterruptChord(key({ key: ".", code: "Period", ctrlKey: false, metaKey: true })),
+    true,
+  );
+  // Non-Latin layouts may report the physical Period code with a mapped key.
+  assert.equal(
+    isMacCommandPeriodInterruptChord(key({ key: "。", code: "Period", ctrlKey: false, metaKey: true })),
+    true,
+  );
+});
+
+test("mac Command+Period chord requires Meta and no other modifiers", () => {
+  const chord = { key: ".", code: "Period", ctrlKey: false, metaKey: true };
+  assert.equal(isMacCommandPeriodInterruptChord(key({ ...chord, shiftKey: true })), false);
+  assert.equal(isMacCommandPeriodInterruptChord(key({ ...chord, altKey: true })), false);
+  assert.equal(isMacCommandPeriodInterruptChord(key({ ...chord, ctrlKey: true })), false);
+  assert.equal(isMacCommandPeriodInterruptChord(key({ key: ".", code: "Period", metaKey: false })), false);
+});
+
+test("mac Command+Period chord prefers the layout character over the physical key", () => {
+  assert.equal(
+    isMacCommandPeriodInterruptChord(key({ key: ",", code: "Period", ctrlKey: false, metaKey: true })),
+    false,
+  );
+  assert.equal(
+    isMacCommandPeriodInterruptChord(key({ key: ".", code: "KeyJ", ctrlKey: false, metaKey: true })),
+    true,
+  );
+  assert.equal(
+    isMacCommandPeriodInterruptChord(key({ key: "ю", code: "Period", ctrlKey: false, metaKey: true })),
+    true,
+  );
 });
