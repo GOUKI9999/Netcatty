@@ -338,6 +338,12 @@ declare global {
         logRewrite?: { sentCommand: string; displayCommand: string };
       },
     ): void;
+    /**
+     * Report interactive user input for sessions where keystrokes are buffered
+     * in the renderer (serial line mode), so main-process login-assist
+     * detectors see the user taking control.
+     */
+    notifySessionUserInput?(sessionId: string): void;
     interruptSession?(sessionId: string, trace?: NetcattyTerminalInterruptTrace): void;
     resizeSession(sessionId: string, cols: number, rows: number): void;
     /**

@@ -209,6 +209,7 @@ type TerminalBackendApi = {
   openExternalAvailable: () => boolean;
   openExternal: (url: string) => Promise<void>;
   writeToSession: (sessionId: string, data: string) => void;
+  notifyUserInput?: (sessionId: string) => void;
   interruptSession?: (sessionId: string, trace?: NetcattyTerminalInterruptTrace) => void;
   signalPluginConnection?: (
     sessionId: string,
@@ -1329,6 +1330,16 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         ctx.serialLineMode &&
         ctx.serialLineBufferRef
       ) {
+        // Line mode never reaches writeToSession until Enter, so buffered
+        // keystrokes are invisible to the main-process auto-login detector.
+        // The first buffered keystroke means the user is taking control:
+        // cancel the detector exactly like character-mode input would.
+        // Submit (\r/\n) and Ctrl+C already write to the session, which
+        // cancels it on that path.
+        const isSessionWrite = dataToWrite === "\r" || dataToWrite === "\n" || dataToWrite === "\x03";
+        if (!isSessionWrite) {
+          ctx.terminalBackend.notifyUserInput?.(id);
+        }
         handleSerialLineModeInput(dataToWrite, {
           bufferRef: ctx.serialLineBufferRef,
           localEcho: ctx.serialLocalEcho,

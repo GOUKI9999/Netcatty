@@ -26,6 +26,41 @@ test("serial auto-login cancels on interactive user input but not automated writ
   }
 });
 
+test("serial line-mode buffered input notification cancels auto-login", () => {
+  let userInputs = 0;
+  const session = {
+    type: "serial",
+    protocol: "serial",
+    encoding: "utf-8",
+    serialPort: { write: () => true },
+    autoLogin: {
+      // Mirror createTelnetAutoLogin.handleUserInput: idempotent cancel.
+      handleUserInput() {
+        if (this.disabled) return;
+        this.disabled = true;
+        userInputs += 1;
+      },
+      disabled: false,
+    },
+  };
+  terminalBridge.init({ sessions: new Map([["s", session]]), electronModule: {} });
+  try {
+    // Serial line mode buffers keystrokes in the renderer and only writes to
+    // the session on Enter, so cancellation is signalled via a dedicated
+    // notification instead of the write path.
+    terminalBridge.notifySessionUserInput({}, { sessionId: "s" });
+    assert.equal(userInputs, 1);
+    // Idempotent: further notifications do not re-notify.
+    terminalBridge.notifySessionUserInput({}, { sessionId: "s" });
+    assert.equal(userInputs, 1);
+    // Unknown sessions are ignored.
+    terminalBridge.notifySessionUserInput({}, { sessionId: "missing" });
+    assert.equal(userInputs, 1);
+  } finally {
+    terminalBridge.cleanupAllSessions();
+  }
+});
+
 test("serial sessions without auto-login credentials accept input normally", () => {
   const writes = [];
   const session = {

@@ -1664,6 +1664,19 @@ function writeToSessionWithInterception(
   });
 }
 
+// Line-mode serial input is buffered in the renderer and only reaches
+// writeToSession on Enter, so the auto-login detector would otherwise stay
+// armed while the user is already typing. The renderer notifies us on the
+// first buffered keystroke so the detector is cancelled the same way it is
+// for character-mode input.
+function notifySessionUserInput(event, payload) {
+  const session = sessions.get(payload?.sessionId);
+  if (!session) return;
+  if (session.type === 'telnet-native' || session.type === 'serial') {
+    session.autoLogin?.handleUserInput();
+  }
+}
+
 function writeToSession(event, payload) {
   const session = sessions.get(payload.sessionId);
   if (!session) return;
@@ -2377,6 +2390,7 @@ function registerHandlers(ipcMain, options = {}) {
       "netcatty:resize",
       "netcatty:pty:clear",
       "netcatty:flow:ack",
+      "netcatty:terminal:user-input",
     ].forEach((channel) => registerWorkerSend(ipcMain, terminalWorkerManager, channel));
     ipcMain.on("netcatty:flow", (event, payload) => {
       if (payload?._flowArbitrated === true) {
@@ -2412,6 +2426,7 @@ function registerHandlers(ipcMain, options = {}) {
   ipcMain.handle("netcatty:terminal:setEncoding", setSessionEncoding);
   ipcMain.handle("netcatty:telnet:getEchoMode", getTelnetEchoMode);
   ipcMain.on("netcatty:write", writeToSession);
+  ipcMain.on("netcatty:terminal:user-input", notifySessionUserInput);
   ipcMain.on("netcatty:interrupt", interruptSession);
   ipcMain.on("netcatty:resize", resizeSession);
   ipcMain.on("netcatty:pty:clear", clearSessionPtyBuffer);
@@ -2592,6 +2607,7 @@ module.exports = {
   receiveSerialYmodem,
   listSerialPorts,
   writeToSession,
+  notifySessionUserInput,
   setSessionEncoding,
   resizeSession,
   clearSessionPtyBuffer,
