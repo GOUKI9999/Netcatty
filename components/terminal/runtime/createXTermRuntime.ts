@@ -2042,8 +2042,28 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         } else {
           ctx.terminalBackend.writeToSession(id, "\x03");
         }
-        const kittyEvent = toKittyKeyboardEvent(e);
-        const identity = kittyKeyIdentity(e);
+        // Report the interrupt to Kitty as Ctrl+C even when it came from the
+        // ⌘. chord: the broadcast legacy \x03 is keyed by this identity, so
+        // forwarding Super+Period would leave peers with an unmatched
+        // Super+Period press and suppress the interrupt instead (#3408).
+        const interruptEventForKitty: KeyboardEvent = macCommandPeriodInterrupt
+          ? {
+              type: e.type,
+              key: "c",
+              code: "KeyC",
+              location: e.location,
+              repeat: e.repeat,
+              isComposing: e.isComposing,
+              keyCode: 67,
+              shiftKey: false,
+              altKey: false,
+              ctrlKey: true,
+              metaKey: false,
+              getModifierState: (key: string) => key === "Control" && e.getModifierState("Control"),
+            } as unknown as KeyboardEvent
+          : e;
+        const kittyEvent = toKittyKeyboardEvent(interruptEventForKitty);
+        const identity = kittyKeyIdentity(interruptEventForKitty);
         if (
           !term.modes.win32InputMode &&
           kittyKeyboardProtocolEnabled &&
