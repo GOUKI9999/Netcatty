@@ -619,6 +619,54 @@ test("getServerStats does not touch the companion path for a normal SSH session"
   assert.equal(result.success, true);
 });
 
+test("getServerStats reports null GPU fields when the host has no nvidia-smi data", async () => {
+  const sessions = new Map();
+  sessions.set("sid", { type: "ssh", conn: fakeConn(LINUX_STATS) });
+
+  const api = makeSessionOps(sessions);
+  const result = await api.getServerStats({ sender: {} }, { sessionId: "sid" });
+
+  assert.equal(result.success, true);
+  assert.equal(result.stats.gpu, null);
+  assert.equal(result.stats.gpuName, null);
+  assert.equal(result.stats.gpuMemUsed, null);
+  assert.equal(result.stats.gpuMemTotal, null);
+});
+
+test("getServerStats parses NVIDIA GPU utilization and VRAM from the stats line", async () => {
+  // Mirrors the remote line: nvidia-smi CSV is space-squeezed to
+  // "<avgUtil> <sumMemUsed> <sumMemTotal> <first GPU name>".
+  const sessions = new Map();
+  sessions.set("sid", {
+    type: "ssh",
+    conn: fakeConn(`${LINUX_STATS}|GPU:73 2048 24576 NVIDIA GeForce RTX 4090`),
+  });
+
+  const api = makeSessionOps(sessions);
+  const result = await api.getServerStats({ sender: {} }, { sessionId: "sid" });
+
+  assert.equal(result.success, true);
+  assert.equal(result.stats.gpu, 73);
+  assert.equal(result.stats.gpuName, "NVIDIA GeForce RTX 4090");
+  assert.equal(result.stats.gpuMemUsed, 2048);
+  assert.equal(result.stats.gpuMemTotal, 24576);
+});
+
+test("getServerStats tolerates a malformed GPU section", async () => {
+  const sessions = new Map();
+  sessions.set("sid", {
+    type: "ssh",
+    conn: fakeConn(`${LINUX_STATS}|GPU:[Not Supported]`),
+  });
+
+  const api = makeSessionOps(sessions);
+  const result = await api.getServerStats({ sender: {} }, { sessionId: "sid" });
+
+  assert.equal(result.success, true);
+  assert.equal(result.stats.gpu, null);
+  assert.equal(result.stats.gpuName, null);
+});
+
 test("getServerStats measures latency by pinging the stats connection", async () => {
   const sessions = new Map();
   const session = {
