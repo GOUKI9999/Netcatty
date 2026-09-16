@@ -1716,10 +1716,12 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     const forwardedPress =
       broadcastForwardedKeys.get(normalizedIdentity)
       ?? kittyForwardedKeys.get(normalizedIdentity);
-    if (!forwardedPress) {
-      kittyNormalizedPressAliases.delete(physicalIdentity);
-      return null;
-    }
+    // Consume the alias on every path once it has been paired (or
+    // invalidated): a later keyup for the same physical key while another
+    // KeyC press is outstanding must not be rewritten as the normalized
+    // release (#3408).
+    kittyNormalizedPressAliases.delete(physicalIdentity);
+    if (!forwardedPress) return null;
     return forwardedPress.event;
   };
 
