@@ -479,3 +479,29 @@ test("cancel() disables the detector and clears the expiry timer", () => {
   assert.equal(incomplete, 0);
   assert.deepEqual(timers, []);
 });
+
+test("telnet auto-login keeps observing login prompts that arrive after expiry", () => {
+  let clock = 0;
+  let incomplete = 0;
+  const writes = [];
+  const autoLogin = createTelnetAutoLogin({
+    username: "admin",
+    password: "secret",
+    write: (data) => writes.push(data),
+    now: () => clock,
+    timeoutMs: 60_000,
+    onIncomplete: () => { incomplete += 1; },
+  });
+
+  // Slow-booting device: only a banner before the window expires, first
+  // login prompt arrives afterwards.
+  autoLogin.handleText("\r\nWelcome banner\r\n");
+  clock = 60_001;
+  autoLogin.handleText("\r\nUsername: ");
+  autoLogin.handleText("\r\nPassword: ");
+
+  // The pending prompt must be reported so the caller cancels its
+  // deferred startup command; no credentials may be sent after expiry.
+  assert.equal(incomplete, 1);
+  assert.deepEqual(writes, []);
+});

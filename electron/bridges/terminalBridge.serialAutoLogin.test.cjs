@@ -77,3 +77,47 @@ test("serial sessions without auto-login credentials accept input normally", () 
     terminalBridge.cleanupAllSessions();
   }
 });
+
+test("serial auto-login cancels at input ingress before a slow interceptor resolves", async () => {
+  let userInputs = 0;
+  let interceptorResolved = false;
+  const session = {
+    type: "serial",
+    protocol: "serial",
+    encoding: "utf-8",
+    serialPort: { write: () => true },
+    autoLogin: {
+      // Mirror createTelnetAutoLogin.handleUserInput: idempotent cancel.
+      handleUserInput() {
+        if (this.disabled) return;
+        this.disabled = true;
+        userInputs += 1;
+      },
+      disabled: false,
+    },
+  };
+  terminalBridge.init({
+    sessions: new Map([["s", session]]),
+    electronModule: {},
+    terminalDataPipeline: {
+      has: () => true,
+      interceptInput: async (sessionId, data) => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        interceptorResolved = true;
+        return data;
+      },
+    },
+  });
+  try {
+    terminalBridge.writeToSession({}, { sessionId: "s", data: "ls\r" });
+    // Cancellation must happen synchronously at ingress, not only after the
+    // asynchronous interceptor resolves.
+    assert.equal(userInputs, 1);
+    assert.equal(interceptorResolved, false);
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.equal(userInputs, 1);
+  } finally {
+    terminalBridge.cleanupAllSessions();
+  }
+});

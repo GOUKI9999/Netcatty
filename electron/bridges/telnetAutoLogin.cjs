@@ -157,7 +157,13 @@ function createTelnetAutoLogin(options = {}) {
     handleText(text) {
       if (isExpired()) {
         disabled = true;
-        if (hasSentCredentials() && (isUsernamePrompt(tail) || isPasswordPrompt(tail))) {
+        // Keep observing output after expiry: a slow-booting device can
+        // surface its first Login/Password prompt after the window elapsed
+        // without any credentials having been sent. Report the pending
+        // prompt so callers can cancel deferred post-login actions instead
+        // of blindly typing them into it. Credentials are never sent here.
+        tail = `${tail}${text || ""}`.slice(-TAIL_LIMIT);
+        if (isUsernamePrompt(tail) || isPasswordPrompt(tail)) {
           notifyIncomplete();
         }
         return;

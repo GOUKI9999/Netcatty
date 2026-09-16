@@ -1646,6 +1646,21 @@ function writeToSessionWithInterception(
     writeToSessionNow(payload, data, logRewrite);
     return;
   }
+  // Cancel the auto-login detector at input ingress, before the asynchronous
+  // interception pipeline: a slow interceptor would otherwise leave the
+  // detector armed while the user's keystrokes are queued, letting a login
+  // prompt that arrives during that wait trigger a saved-credential
+  // transmission after the user has already taken over. Same guard
+  // conditions as writeToSessionNow; handleUserInput is idempotent, so the
+  // later call there stays a no-op.
+  if (
+    expectedSession
+    && (expectedSession.type === 'telnet-native' || expectedSession.type === 'serial')
+    && !payload.automated
+    && !isTerminalReportSequence(data)
+  ) {
+    expectedSession.autoLogin?.handleUserInput();
+  }
   const writeIfCurrent = (nextData) => {
     const current = sessions.get(payload.sessionId);
     if (!current || current !== expectedSession || current.closed) return;
