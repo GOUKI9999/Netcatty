@@ -1534,7 +1534,11 @@ function writeToSessionNow(payload, data, logRewrite = payload.logRewrite) {
   }
 
   try {
-    if ((session.type === 'telnet-native' || session.type === 'serial') && !payload.automated) {
+    if (
+      (session.type === 'telnet-native' || session.type === 'serial')
+      && !payload.automated
+      && !isTerminalReportSequence(data)
+    ) {
       session.autoLogin?.handleUserInput();
     }
 

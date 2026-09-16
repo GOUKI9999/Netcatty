@@ -117,11 +117,12 @@ test("startSerial omits credentials when none are saved", async () => {
   assert.equal("password" in capturedOptions, false);
 });
 
-test("startSerial skips an undecryptable saved password", async () => {
-  let capturedOptions: Record<string, unknown> | null = null;
+test("startSerial rejects an undecryptable saved password instead of partial auto-login", async () => {
+  let started = false;
+  const errors: (string | null)[] = [];
   const backend = buildBackend({
-    startSerialSession: async (options: Record<string, unknown>) => {
-      capturedOptions = options;
+    startSerialSession: async () => {
+      started = true;
       return "serial-session";
     },
   });
@@ -131,14 +132,16 @@ test("startSerial skips an undecryptable saved password", async () => {
       id: "serial-1",
       hostname: "/dev/ttyUSB0",
       protocol: "serial",
-      username: "",
+      username: "admin",
       password: ENCRYPTED_CREDENTIAL_PLACEHOLDER,
     },
+    setError: (message: string | null) => errors.push(message),
   }) as never).startSerial(term as never);
 
-  assert.ok(capturedOptions);
-  assert.equal("username" in capturedOptions, false);
-  assert.equal("password" in capturedOptions, false);
+  // A saved username paired with an undecryptable password must not start a
+  // partial auto-login; ask the user to re-enter the credential instead.
+  assert.equal(started, false);
+  assert.ok(errors[0]);
 });
 
 test("startSerial waits for auto-login before running the startup command", async () => {

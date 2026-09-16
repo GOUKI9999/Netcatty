@@ -144,7 +144,11 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
       hostname: selectedPort,
       port: baudRate,
       username: username.trim() || undefined,
-      password: password || undefined,
+      // An empty password is meaningful for serial auto-login: the detector
+      // distinguishes an absent password from a present empty string and
+      // submits the required blank line at a Password prompt. Only clear the
+      // credential when it was previously set; preserve a saved blank password.
+      password: password || (initialData.password === '' ? '' : undefined),
       tags,
       group,
       charset,

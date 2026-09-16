@@ -1996,6 +1996,21 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
 
       const serialUsername = (ctx.host.username ?? "").trim();
       const serialPassword = sanitizeCredentialValue(ctx.host.password);
+      // Mirror the Telnet path: an undecryptable saved password must not start
+      // a partial auto-login (username without password), which would leave a
+      // startup command waiting on a password prompt that is never answered.
+      if (isEncryptedCredentialPlaceholder(ctx.host.password)) {
+        const message = tr(
+          "terminal.auth.credentialsUnavailable",
+          "Saved credentials cannot be decrypted on this device. Please re-enter and save them again.",
+        );
+        ctx.setNeedsAuth(false);
+        ctx.setAuthRetryMessage(null);
+        ctx.setError(message);
+        writeTerminalLine(ctx, term, `\r\n[${message}]`);
+        ctx.updateStatus("disconnected");
+        return;
+      }
       const hasSerialAutoLoginCredentials = Boolean(
         serialUsername || serialPassword !== undefined,
       );

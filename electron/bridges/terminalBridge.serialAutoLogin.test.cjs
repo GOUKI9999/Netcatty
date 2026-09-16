@@ -17,6 +17,10 @@ test("serial auto-login cancels on interactive user input but not automated writ
     assert.equal(userInputs, 1);
     terminalBridge.writeToSession({}, { sessionId: "s", data: "y", automated: true });
     assert.equal(userInputs, 1);
+    // xterm replies to ANSI queries (cursor position, DA1, ...) travel through
+    // onData without `automated`; they must not cancel auto-login.
+    terminalBridge.writeToSession({}, { sessionId: "s", data: "\x1b[24;80R" });
+    assert.equal(userInputs, 1);
   } finally {
     terminalBridge.cleanupAllSessions();
   }
