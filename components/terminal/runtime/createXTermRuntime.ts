@@ -1496,7 +1496,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   // can pair the release.
   const kittyNormalizedPressAliases = new Map<string, string>();
   const kittyNormalizedPressIdentity = (identity: string): string =>
-    `${identity} mac-period-interrupt`;
+    `${identity}\u0000mac-period-interrupt`;
   const broadcastEncodedKeys = new Set<string>();
   const broadcastLegacySuppressedKeys = new Set<string>();
   const kittyKeyIdentity = (event: KeyboardEvent): string => event.code || event.key;
@@ -2610,7 +2610,16 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     win32InputModePendingEvent = null;
     win32InputModeForwardedKeys.clear();
     kittyForwardedKeys.clear();
-    kittyNormalizedPressAliases.clear();
+    // broadcastForwardedKeys is retained so pending peer releases still pair
+    // after a reconnect; keep the aliases whose normalized press is still
+    // owed a broadcast release, otherwise the physical keyup can no longer
+    // find the dedicated identity and peers keep the key logically pressed
+    // until blur (#3409).
+    for (const [physicalIdentity, normalizedIdentity] of kittyNormalizedPressAliases) {
+      if (!broadcastForwardedKeys.has(normalizedIdentity)) {
+        kittyNormalizedPressAliases.delete(physicalIdentity);
+      }
+    }
     clearKittyKeyboardBroadcastPairingState(
       broadcastEncodedKeys,
       broadcastLegacySuppressedKeys,
