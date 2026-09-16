@@ -81,6 +81,7 @@ function createTelnetAutoLogin(options = {}) {
   const write = typeof options.write === "function" ? options.write : () => {};
   const onComplete = typeof options.onComplete === "function" ? options.onComplete : () => {};
   const onUserInput = typeof options.onUserInput === "function" ? options.onUserInput : () => {};
+  const onIncomplete = typeof options.onIncomplete === "function" ? options.onIncomplete : () => {};
   const now = typeof options.now === "function" ? options.now : Date.now;
   const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : DEFAULT_TIMEOUT_MS;
 
@@ -91,6 +92,7 @@ function createTelnetAutoLogin(options = {}) {
   let disabled = !hasCredentials;
   let completed = false;
   let userInputNotified = false;
+  let incompleteNotified = false;
   const startedAt = now();
 
   const isExpired = () => timeoutMs >= 0 && now() - startedAt > timeoutMs;
@@ -114,11 +116,25 @@ function createTelnetAutoLogin(options = {}) {
     userInputNotified = true;
     onUserInput();
   };
+  // The exchange stalled: credentials were sent but the device still sits at
+  // a login/password prompt the detector cannot answer. Callers use this to
+  // avoid blindly running post-login actions against the pending prompt.
+  const notifyIncomplete = () => {
+    if (incompleteNotified || completed) return;
+    incompleteNotified = true;
+    onIncomplete();
+  };
 
   return {
     handleText(text) {
-      if (disabled || isExpired()) {
+      if (isExpired()) {
         disabled = true;
+        if (hasSentCredentials() && (isUsernamePrompt(tail) || isPasswordPrompt(tail))) {
+          notifyIncomplete();
+        }
+        return;
+      }
+      if (disabled) {
         return;
       }
 
@@ -146,6 +162,15 @@ function createTelnetAutoLogin(options = {}) {
         sentPassword = true;
         sendLine(password);
         completeIfReady();
+      }
+
+      // No password is configured but the device is now asking for one: the
+      // exchange cannot proceed on its own. Report the stall so callers do
+      // not schedule post-login actions that would be consumed as the
+      // password. The detector stays enabled: if the device moves on to a
+      // command prompt, completeIfReady can still fire.
+      if (!disabled && !completed && !hasPassword && isPasswordPrompt(tail)) {
+        notifyIncomplete();
       }
     },
     handleUserInput() {

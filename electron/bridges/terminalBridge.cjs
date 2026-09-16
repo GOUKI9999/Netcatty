@@ -1368,6 +1368,14 @@ async function startSerialSession(event, options) {
             onUserInput() {
               emitAutoLoginEvent("netcatty:telnet:auto-login-cancelled");
             },
+            onIncomplete() {
+              // Stalled/expired exchange (e.g. the device asks for a password
+              // but none is saved, or the auto-login window elapsed while the
+              // device still sits at a login prompt). Treat it like a
+              // cancellation so the renderer does not blindly run the startup
+              // command against the pending prompt.
+              emitAutoLoginEvent("netcatty:telnet:auto-login-cancelled");
+            },
           });
         }
 

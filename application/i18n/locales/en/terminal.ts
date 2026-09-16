@@ -830,6 +830,7 @@ export const enTerminalMessages: Messages = {
   'serial.field.username': 'Username',
   'serial.field.password': 'Password',
   'serial.field.autoLoginDesc': 'When set, Login/Password prompts on the serial console are answered automatically with these saved credentials.',
+  'serial.field.clearPassword': 'Clear saved password',
 
   // Keyboard Interactive Authentication (2FA/MFA)
   'keyboard.interactive.title': 'Authentication Required',

@@ -280,3 +280,76 @@ test("telnet auto-login works with Kylin V10 Input Password prompt from issue #1
 
   assert.deepEqual(writes, ["lybing\r", "secret\r"]);
 });
+
+test("telnet auto-login notifies incomplete when the device asks for a password that is not saved", () => {
+  const writes = [];
+  let completed = false;
+  let incomplete = 0;
+  const autoLogin = createTelnetAutoLogin({
+    username: "admin",
+    write: (data) => writes.push(data),
+    onComplete: () => { completed = true; },
+    onIncomplete: () => { incomplete += 1; },
+  });
+
+  autoLogin.handleText("Username: ");
+  autoLogin.handleText("\r\nPassword: ");
+
+  assert.deepEqual(writes, ["admin\r"]);
+  assert.equal(completed, false);
+  assert.equal(incomplete, 1);
+
+  // The detector stays alive: if the device moves on to a command prompt the
+  // exchange can still complete.
+  autoLogin.handleText("\r\nrouter# ");
+
+  assert.equal(completed, true);
+  assert.equal(incomplete, 1);
+});
+
+test("telnet auto-login notifies incomplete when the window expires mid-exchange", () => {
+  let clock = 0;
+  let incomplete = 0;
+  const autoLogin = createTelnetAutoLogin({
+    username: "admin",
+    password: "secret",
+    write: () => {},
+    now: () => clock,
+    timeoutMs: 60_000,
+    onIncomplete: () => { incomplete += 1; },
+  });
+
+  autoLogin.handleText("Username: ");
+  autoLogin.handleText("\r\nPassword: ");
+  // Login failed: the device re-prompts and the detector cannot recover.
+  autoLogin.handleText("\r\nUsername: ");
+  assert.equal(incomplete, 0);
+
+  clock = 60_001;
+  autoLogin.handleText("\r\nUsername: ");
+  assert.equal(incomplete, 1);
+
+  // Idempotent: further chunks after expiry do not re-notify.
+  autoLogin.handleText("more output");
+  assert.equal(incomplete, 1);
+});
+
+test("telnet auto-login does not notify incomplete for quiet devices", () => {
+  let clock = 0;
+  let incomplete = 0;
+  const autoLogin = createTelnetAutoLogin({
+    username: "admin",
+    write: () => {},
+    now: () => clock,
+    timeoutMs: 60_000,
+    onIncomplete: () => { incomplete += 1; },
+  });
+
+  autoLogin.handleText("\r\nWelcome banner\r\n");
+  clock = 60_001;
+  autoLogin.handleText("\r\nmore banner");
+
+  // Quiet devices never interact, so the caller's quiet-device fallback
+  // remains valid.
+  assert.equal(incomplete, 0);
+});

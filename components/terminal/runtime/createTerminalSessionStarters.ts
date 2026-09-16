@@ -1965,6 +1965,11 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     // attach, otherwise scheduleStartupCommand marks it as run and its timer
     // then drops it against the unset ctx.sessionRef.current.
     let autoLoginCompletedBeforeAttach = false;
+    // Auto-login can be cancelled (stalled exchange or user input) before the
+    // startSerialSession promise resolves; the fallback must not be armed
+    // after attach in that case, or it would blindly type the startup command
+    // at whatever prompt is pending.
+    let autoLoginCancelledBeforeAttach = false;
     let autoLoginAttached = false;
     const clearAutoLoginFallbackTimer = () => {
       if (autoLoginFallbackTimer) {
@@ -2057,6 +2062,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
             ) {
               return;
             }
+            if (!autoLoginAttached) {
+              autoLoginCancelledBeforeAttach = true;
+            }
             cleanupSerialStartupWait();
           },
         );
@@ -2106,6 +2114,14 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           // Login already completed before the session attached; schedule now
           // that ctx.sessionRef.current points at this session.
           scheduleStartupAfterAutoLogin();
+          return;
+        }
+        if (autoLoginCancelledBeforeAttach) {
+          // Auto-login was cancelled before the session attached (stalled
+          // exchange at a prompt the detector cannot answer, or the user took
+          // over). The quiet-device fallback must not fire: the startup
+          // command would be consumed as the answer to the pending prompt.
+          cleanupSerialStartupWait();
           return;
         }
         // Arm the fallback only now that the port is open and the session is

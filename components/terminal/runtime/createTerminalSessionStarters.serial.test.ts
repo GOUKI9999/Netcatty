@@ -303,3 +303,47 @@ test("startSerial runs the startup command without waiting when no credentials a
   ]);
   assert.deepEqual(writtenCommands, ["show version\r"]);
 });
+
+test("startSerial does not arm the fallback when auto-login is cancelled before attach", async () => {
+  const writtenCommands: string[] = [];
+  let autoLoginCancelled: ((evt: { sessionId: string }) => void) | null = null;
+
+  const backend = buildBackend({
+    startSerialSession: async () => {
+      // A stalled exchange (e.g. only a username is saved and the device moves
+      // on to a Password prompt the detector cannot answer) cancels auto-login
+      // before the startSerialSession promise resolves.
+      autoLoginCancelled?.({ sessionId: "session-1" });
+      return "serial-session";
+    },
+    onTelnetAutoLoginComplete: () => noop,
+    onTelnetAutoLoginCancelled: (
+      _sessionId: string,
+      cb: (evt: { sessionId: string }) => void,
+    ) => {
+      autoLoginCancelled = cb;
+      return noop;
+    },
+    writeToSession: (_sessionId: string, data: string) => {
+      writtenCommands.push(data);
+    },
+  });
+
+  const ctx = buildCtx(backend, {
+    host: {
+      id: "serial-1",
+      hostname: "/dev/ttyUSB0",
+      protocol: "serial",
+      username: "admin",
+      startupCommand: "show version",
+    },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSerial(term as never);
+  assert.ok(autoLoginCancelled);
+
+  // The 65s quiet-device fallback must not be armed after the cancellation,
+  // or it would type the startup command into the pending password prompt.
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  assert.deepEqual(writtenCommands, []);
+});
