@@ -84,6 +84,8 @@ function createTelnetAutoLogin(options = {}) {
   const onIncomplete = typeof options.onIncomplete === "function" ? options.onIncomplete : () => {};
   const now = typeof options.now === "function" ? options.now : Date.now;
   const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : DEFAULT_TIMEOUT_MS;
+  const setTimer = typeof options.setTimeout === "function" ? options.setTimeout : (fn, ms) => setTimeout(fn, ms);
+  const clearTimer = typeof options.clearTimeout === "function" ? options.clearTimeout : (id) => clearTimeout(id);
 
   let tail = "";
   let sentWake = false;
@@ -93,12 +95,20 @@ function createTelnetAutoLogin(options = {}) {
   let completed = false;
   let userInputNotified = false;
   let incompleteNotified = false;
+  let expiryTimer;
   const startedAt = now();
 
   const isExpired = () => timeoutMs >= 0 && now() - startedAt > timeoutMs;
+  const clearExpiryTimer = () => {
+    if (expiryTimer) {
+      clearTimer(expiryTimer);
+      expiryTimer = undefined;
+    }
+  };
   const complete = () => {
     if (completed) return;
     completed = true;
+    clearExpiryTimer();
     onComplete();
   };
   const hasSentCredentials = () => sentPassword || sentUsername;
@@ -124,6 +134,24 @@ function createTelnetAutoLogin(options = {}) {
     incompleteNotified = true;
     onIncomplete();
   };
+  // The expiry must not depend on the device sending more bytes: a device
+  // that rejects the saved credentials, reprints Login/Password and then goes
+  // silent never triggers the handleText-after-expiry check below, so without
+  // a timer the incomplete state is never reported and callers would blindly
+  // type their startup command into the pending login prompt.
+  const handleExpiry = () => {
+    expiryTimer = undefined;
+    if (completed || disabled) return;
+    disabled = true;
+    if (hasSentCredentials() && (isUsernamePrompt(tail) || isPasswordPrompt(tail))) {
+      notifyIncomplete();
+    }
+  };
+  if (timeoutMs >= 0) {
+    expiryTimer = setTimer(handleExpiry, timeoutMs);
+    // Do not keep the process alive just for this timer.
+    expiryTimer?.unref?.();
+  }
 
   return {
     handleText(text) {
@@ -175,6 +203,7 @@ function createTelnetAutoLogin(options = {}) {
     },
     handleUserInput() {
       disabled = true;
+      clearExpiryTimer();
       notifyUserInput();
     },
   };
