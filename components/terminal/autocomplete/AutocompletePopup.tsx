@@ -380,11 +380,13 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
         display: "flex",
         alignItems: renderUpward ? "flex-end" : "flex-start",
         gap: "4px",
-        pointerEvents: "auto", // Re-enable on popup itself (parent is pointer-events-none)
-      }}
-      onMouseDown={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
+        // Hit-test transparent: the wrapper's box spans the whole assembly,
+        // including the mounted-but-hidden detail reserve, so leaving it
+        // auto would make the transparent area around a short list a dead
+        // zone (clicks there preventDefault + stopPropagation and never
+        // reach the terminal or the outside-dismiss handler). Children
+        // re-enable pointer events individually. (#3427 review)
+        pointerEvents: "none",
       }}
     >
       {/* Main suggestion list */}
@@ -400,6 +402,13 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
           overflowX: "hidden",
           padding: "4px 0",
           userSelect: "none",
+          pointerEvents: "auto",
+        }}
+        // Keep the terminal focused when clicking the list's padding or
+        // scrollbar (row clicks handle this themselves).
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
         }}
       >
         {suggestions.map((suggestion, index) => {
@@ -535,6 +544,13 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
             padding: "4px 0",
             userSelect: "none",
             alignSelf: "flex-start",
+            pointerEvents: "auto",
+          }}
+          // Keep the terminal focused when clicking the panel's padding or
+          // scrollbar (row clicks handle this themselves).
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
           }}
         >
           {panel.entries.map((entry, idx) => {
@@ -594,6 +610,14 @@ const AutocompletePopup: React.FC<AutocompletePopupProps> = ({
             overflowY: "auto",
             alignSelf: renderUpward ? "flex-end" : "flex-start",
             visibility: detailVisible ? "visible" : "hidden",
+            // visibility:hidden already skips hit testing, but keep the
+            // hidden reserve explicitly non-interactive so the mounted
+            // panel can never swallow clicks meant for the terminal.
+            pointerEvents: detailVisible ? "auto" : "none",
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
           }}
         >
           {detailVisible && detailItem && (
