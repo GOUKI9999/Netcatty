@@ -31,9 +31,18 @@ export const HostTreeGroupDeleteDialog: React.FC<HostTreeGroupDeleteDialogProps>
   const [deleteHosts, setDeleteHosts] = useState(false);
   const isOpen = Boolean(targetPath);
   const isManaged = Boolean(targetPath && managedGroupPaths?.has(targetPath));
-  const managedFile = targetPath
-    ? managedFileByGroupPath?.get(targetPath)
-    : undefined;
+  const descendantManagedFiles: string[] = [];
+  if (targetPath && managedFileByGroupPath) {
+    for (const [groupPath, filePath] of managedFileByGroupPath) {
+      if (
+        filePath
+        && (groupPath === targetPath || groupPath.startsWith(`${targetPath}/`))
+        && !descendantManagedFiles.includes(filePath)
+      ) {
+        descendantManagedFiles.push(filePath);
+      }
+    }
+  }
 
   useEffect(() => {
     if (!isOpen) {
@@ -64,14 +73,19 @@ export const HostTreeGroupDeleteDialog: React.FC<HostTreeGroupDeleteDialogProps>
                 {t('vault.groups.pathLabel')}:{' '}
                 <span className="font-mono">{targetPath}</span>
               </p>
-              {isManaged && managedFile && (
+              {descendantManagedFiles.length > 0 && (
                 <div className="space-y-1 rounded-md border border-destructive/40 bg-destructive/10 p-3">
                   <p className="text-sm text-destructive">
                     {t('vault.groups.deleteDialog.managedWarning')}
                   </p>
-                  <p className="break-all font-mono text-xs text-muted-foreground">
-                    {t('vault.groups.deleteDialog.managedFile', { file: managedFile })}
-                  </p>
+                  {descendantManagedFiles.map((filePath) => (
+                    <p
+                      key={filePath}
+                      className="break-all font-mono text-xs text-muted-foreground"
+                    >
+                      {t('vault.groups.deleteDialog.managedFile', { file: filePath })}
+                    </p>
+                  ))}
                 </div>
               )}
               {!isManaged && (

@@ -1672,16 +1672,20 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
                     <p className="text-sm text-destructive">
                       {t("vault.groups.deleteDialog.managedWarning")}
                     </p>
-                    {pendingDeleteManagedFiles.map((filePath) => (
-                      <p
-                        key={filePath}
-                        className="break-all font-mono text-xs text-muted-foreground"
-                      >
-                        {t("vault.groups.deleteDialog.managedFile", {
-                          file: filePath,
-                        })}
-                      </p>
-                    ))}
+                    {pendingDeleteManagedFiles.length > 0 && (
+                      <div className="max-h-40 space-y-1 overflow-y-auto">
+                        {pendingDeleteManagedFiles.map((filePath) => (
+                          <p
+                            key={filePath}
+                            className="break-all font-mono text-xs text-muted-foreground"
+                          >
+                            {t("vault.groups.deleteDialog.managedFile", {
+                              file: filePath,
+                            })}
+                          </p>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
                 {!pendingDeleteHasManagedGroups && (
