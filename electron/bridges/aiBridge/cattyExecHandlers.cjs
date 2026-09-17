@@ -3,6 +3,7 @@
 // runs under `with (ctx)` where bare `require` resolves to ctx.require
 // (based in electron/bridges/). Requiring here keeps the path unambiguous.
 const { formatSyntheticEcho } = require("../ai/shellUtils.cjs");
+const { clearSessionFlowState } = require("../terminalFlowAck.cjs");
 const { remoteDisallowsExecChannelProbe, ensureSessionShellKindForExec } = require("../ai/sessionShellKind.cjs");
 
 function getWorkerExecutionMeta(mcpServerBridge, sessionId, chatSessionId) {
@@ -171,6 +172,7 @@ function registerCattyExecHandlers(ctx) {
             return { ok: false, error: `Command blocked by safety policy. Pattern: ${safety.matchedPattern}` };
           }
           return execViaPty(ptyStream, command, {
+            onInterrupt: () => clearSessionFlowState(session),
             stripMarkers: true,
             trackForCancellation: mcpServerBridge.activePtyExecs,
             timeoutMs,
