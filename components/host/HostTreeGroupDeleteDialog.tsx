@@ -17,11 +17,13 @@ import {
 
 type HostTreeGroupDeleteDialogProps = {
   managedGroupPaths?: Set<string>;
+  managedFileByGroupPath?: Map<string, string>;
   onConfirmDelete: (groupPath: string, deleteHosts: boolean) => void | Promise<void>;
 };
 
 export const HostTreeGroupDeleteDialog: React.FC<HostTreeGroupDeleteDialogProps> = ({
   managedGroupPaths,
+  managedFileByGroupPath,
   onConfirmDelete,
 }) => {
   const { t } = useI18n();
@@ -29,6 +31,9 @@ export const HostTreeGroupDeleteDialog: React.FC<HostTreeGroupDeleteDialogProps>
   const [deleteHosts, setDeleteHosts] = useState(false);
   const isOpen = Boolean(targetPath);
   const isManaged = Boolean(targetPath && managedGroupPaths?.has(targetPath));
+  const managedFile = targetPath
+    ? managedFileByGroupPath?.get(targetPath)
+    : undefined;
 
   useEffect(() => {
     if (!isOpen) {
@@ -59,6 +64,16 @@ export const HostTreeGroupDeleteDialog: React.FC<HostTreeGroupDeleteDialogProps>
                 {t('vault.groups.pathLabel')}:{' '}
                 <span className="font-mono">{targetPath}</span>
               </p>
+              {isManaged && managedFile && (
+                <div className="space-y-1 rounded-md border border-destructive/40 bg-destructive/10 p-3">
+                  <p className="text-sm text-destructive">
+                    {t('vault.groups.deleteDialog.managedWarning')}
+                  </p>
+                  <p className="break-all font-mono text-xs text-muted-foreground">
+                    {t('vault.groups.deleteDialog.managedFile', { file: managedFile })}
+                  </p>
+                </div>
+              )}
               {!isManaged && (
                 <label className="flex items-center gap-2 text-sm cursor-pointer">
                   <input

@@ -390,6 +390,19 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
         source.groupName === path || source.groupName.startsWith(path + "/"),
     ),
   );
+  const pendingDeleteManagedFiles: string[] = [];
+  for (const source of managedSources) {
+    if (
+      source.filePath
+      && !pendingDeleteManagedFiles.includes(source.filePath)
+      && pendingDeleteGroupPaths.some(
+        (path) =>
+          source.groupName === path || source.groupName.startsWith(path + "/"),
+      )
+    ) {
+      pendingDeleteManagedFiles.push(source.filePath);
+    }
+  }
   const handleNotesOpenHost = useCallback((host: any, source?: { noteId?: string }) => {
     if (source?.noteId && onOpenHostFromNote) {
       onOpenHostFromNote(host, source);
@@ -1654,6 +1667,23 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
                     })
                   )}
                 </p>
+                {pendingDeleteHasManagedGroups && (
+                  <div className="space-y-1 rounded-md border border-destructive/40 bg-destructive/10 p-3">
+                    <p className="text-sm text-destructive">
+                      {t("vault.groups.deleteDialog.managedWarning")}
+                    </p>
+                    {pendingDeleteManagedFiles.map((filePath) => (
+                      <p
+                        key={filePath}
+                        className="break-all font-mono text-xs text-muted-foreground"
+                      >
+                        {t("vault.groups.deleteDialog.managedFile", {
+                          file: filePath,
+                        })}
+                      </p>
+                    ))}
+                  </div>
+                )}
                 {!pendingDeleteHasManagedGroups && (
                   <label className="flex items-center gap-2 text-sm cursor-pointer">
                     <input

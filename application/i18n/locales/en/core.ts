@@ -1048,6 +1048,8 @@ Highlight the focused split pane:
   'vault.groups.deleteDialogTitle': 'Delete Group',
   'vault.groups.deleteDialog.desc': 'This will permanently delete the group and move all hosts to the root level.',
   'vault.groups.deleteDialog.managedDesc': 'This is a managed SSH config group. Deleting it will also delete all hosts and unlink from the source file.',
+  'vault.groups.deleteDialog.managedWarning': 'Deleting this group will also clear its entries from the linked SSH config file. Entries that came from that file may be lost for other apps that use it. Back up the file before continuing.',
+  'vault.groups.deleteDialog.managedFile': 'Linked file: {file}',
   'vault.groups.deleteDialog.deleteHosts': 'Also delete all hosts in this group',
   'vault.groups.deleteDialog.bulkTitle': 'Delete Selected Groups',
   'vault.groups.deleteDialog.bulkDesc': 'This will permanently delete the selected groups and move their hosts to the root level.',

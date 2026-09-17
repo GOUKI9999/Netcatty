@@ -1006,6 +1006,8 @@ Resalta el panel dividido enfocado:
   'vault.groups.deleteDialogTitle': 'Eliminar grupo',
   'vault.groups.deleteDialog.desc': 'Esto eliminará permanentemente el grupo y moverá todos los hosts al nivel raíz.',
   'vault.groups.deleteDialog.managedDesc': 'Este es un grupo administrado de configuración SSH. Eliminarlo también eliminará todos los hosts y lo desvinculará del archivo de origen.',
+  'vault.groups.deleteDialog.managedWarning': 'Al eliminar este grupo también se borrarán sus entradas del archivo de configuración SSH vinculado. Las entradas provenientes de ese archivo pueden perderse y también afectará a otras aplicaciones que lo usen. Haz una copia de seguridad del archivo antes de continuar.',
+  'vault.groups.deleteDialog.managedFile': 'Archivo vinculado: {file}',
   'vault.groups.deleteDialog.deleteHosts': 'También eliminar todos los hosts de este grupo',
   'vault.groups.deleteDialog.bulkTitle': 'Eliminar grupos seleccionados',
   'vault.groups.deleteDialog.bulkDesc': 'Esto eliminará permanentemente los grupos seleccionados y moverá sus hosts al nivel raíz.',
