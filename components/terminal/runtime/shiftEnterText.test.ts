@@ -35,6 +35,11 @@ test("shift enter text decodes newline, tab, carriage return, and backslash esca
   );
 });
 
+test("shift enter text decodes the escape escape as ESC", () => {
+  assert.equal(decodeTerminalTextEscapes("\\e\r"), "\u001b\r");
+  assert.equal(decodeTerminalTextEscapes("\\e[13;2u"), SHIFT_ENTER_CSI_U_SEQUENCE);
+});
+
 test("shift enter text can represent Tabby-style shell continuation", () => {
   assert.equal(decodeTerminalTextEscapes(" \\\\\\n"), " \\\n");
 });
@@ -109,10 +114,15 @@ test("runtime routes Shift+Enter text through the shared input handler", () => {
     source,
     /const handleTerminalInputData = \(\s+data: string,\s+options\?: \{\s+source\?: "terminal" \| "shift-enter" \| "kitty";\s+[\s\S]*?skipBroadcast\?: boolean;\s+[\s\S]*?perCharacterWrites\?: boolean;\s+\},\s+\) => \{/s,
   );
-  // Remap when Kitty encoding does not preserve Shift+Enter (not merely flags===0).
+  // Remap when Kitty encoding does not preserve Shift+Enter (not merely flags===0),
+  // skipping the ConPTY Win32 hand-off only when the force-text opt-out is on.
   assert.match(
     source,
-    /if \(\s*shouldSendShiftEnterText\([\s\S]*?\) &&\s*!term\.modes\.win32InputMode &&\s*!doesKittyEncodingPreserveShiftEnter\(kittySequenceForKeyDown\)\s*\) \{[\s\S]*?const shiftEnterText = resolveShiftEnterText\([\s\S]*?\)[\s\S]*?\}\s*if \(kittySequenceForKeyDown\)/s,
+    /if \(\s*shouldSendShiftEnterText\([\s\S]*?\) &&\s*\(\s*ctx\.terminalSettingsRef\.current\?\.shiftEnterForceText === true \|\|\s*\(\s*!term\.modes\.win32InputMode &&\s*!doesKittyEncodingPreserveShiftEnter\(kittySequenceForKeyDown\)\s*\)\s*\)\s*\) \{[\s\S]*?const shiftEnterText = resolveShiftEnterText\([\s\S]*?\)[\s\S]*?\}\s*if \(kittySequenceForKeyDown\)/s,
+  );
+  assert.match(
+    source,
+    /shiftEnterForceText opts out of the Win32 hand-off for runtimes that/s,
   );
   assert.match(
     source,

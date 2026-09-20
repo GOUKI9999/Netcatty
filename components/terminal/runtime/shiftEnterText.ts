@@ -36,6 +36,10 @@ export function decodeTerminalTextEscapes(text: string): string {
         decoded += "\t";
         index += 1;
         break;
+      case "e":
+        decoded += "\u001b";
+        index += 1;
+        break;
       case "\\":
         decoded += "\\";
         index += 1;

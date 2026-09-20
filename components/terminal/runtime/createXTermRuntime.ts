@@ -2211,10 +2211,16 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     // associated-text alone), keep the configured send-text fallback. Only
     // negotiated preserving modes may emit CSI-u; alternate-screen activation
     // is not a capability signal.
+    //
+    // shiftEnterForceText opts out of the Win32 hand-off for runtimes that
+    // cannot consume INPUT_RECORD modifiers (Node/Bun via libuv, e.g. Claude
+    // Code and CodeBuddy): they collapse Shift+Enter to a bare CR anyway, so
+    // sending the configured sequence is the only distinguishable input.
     if (
       shouldSendShiftEnterText(e, ctx.terminalSettingsRef.current) &&
-      !term.modes.win32InputMode &&
-      !doesKittyEncodingPreserveShiftEnter(kittySequenceForKeyDown)
+      (ctx.terminalSettingsRef.current?.shiftEnterForceText === true ||
+        (!term.modes.win32InputMode &&
+          !doesKittyEncodingPreserveShiftEnter(kittySequenceForKeyDown)))
     ) {
       const id = ctx.sessionRef.current;
       if (id) {
