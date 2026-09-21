@@ -120,6 +120,28 @@ test("runtime routes Shift+Enter text through the shared input handler", () => {
     source,
     /if \(\s*shouldSendShiftEnterText\([\s\S]*?\) &&\s*\(\s*ctx\.terminalSettingsRef\.current\?\.shiftEnterForceText === true \|\|\s*\(\s*!term\.modes\.win32InputMode &&\s*!doesKittyEncodingPreserveShiftEnter\(kittySequenceForKeyDown\)\s*\)\s*\)\s*\) \{[\s\S]*?const shiftEnterText = resolveShiftEnterText\([\s\S]*?\)[\s\S]*?\}\s*if \(kittySequenceForKeyDown\)/s,
   );
+  // The gate above only decides whether Shift+Enter is *eligible* for send-text.
+  // It must then claim the keydown only when resolveShiftEnterText() returned
+  // actual text: preventDefault/write/broadcast/return false all belong inside
+  // `if (shiftEnterText)`. Empty configured text falls through to the Win32 and
+  // Kitty paths below, so the press still yields a plain Enter instead of being
+  // consumed with nothing written — which looks like a dead feature.
+  const gateBlock = source.slice(
+    source.search(
+      /shouldSendShiftEnterText\(e, ctx\.terminalSettingsRef\.current\) &&\s*\(\s*ctx\.terminalSettingsRef\.current\?\.shiftEnterForceText/,
+    ),
+    source.indexOf("if (kittySequenceForKeyDown) {"),
+  );
+  const interceptionStart = gateBlock.indexOf("if (shiftEnterText) {");
+  assert.notEqual(interceptionStart, -1);
+  const interception = gateBlock.slice(interceptionStart);
+
+  assert.doesNotMatch(
+    gateBlock.slice(0, interceptionStart),
+    /e\.preventDefault\(\)|return false/,
+  );
+  assert.match(interception, /^if \(shiftEnterText\) \{\s*e\.preventDefault\(\);/);
+  assert.match(interception, /return false;\s*\}\s*\}\s*\}\s*$/);
   assert.match(
     source,
     /shiftEnterForceText opts out of the Win32 hand-off for runtimes that/s,

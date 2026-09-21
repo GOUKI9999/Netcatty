@@ -2447,13 +2447,18 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     ) {
       const id = ctx.sessionRef.current;
       if (id) {
-        e.preventDefault();
-        e.stopPropagation();
         const kittyEvent = toKittyKeyboardEvent(e);
         const shiftEnterText = resolveShiftEnterText(
           ctx.terminalSettingsRef.current,
         );
+        // Only claim the keydown when there is text to send. An empty resolved
+        // text (e.g. a persisted empty setting) must fall through to the Win32
+        // and Kitty paths below so a normal Enter is still produced; consuming
+        // the event there would silently swallow the press with no visible
+        // effect, indistinguishable from the feature being dead.
         if (shiftEnterText) {
+          e.preventDefault();
+          e.stopPropagation();
           // Skip string broadcast: peers resolve Shift+Enter from their own
           // negotiated keyboard mode via the key chord below.
           handleTerminalInputData(shiftEnterText, {
@@ -2473,8 +2478,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
               forwarded.targetSessionIds,
             );
           }
+          return false;
         }
-        return false;
       }
     }
 
