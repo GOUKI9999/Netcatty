@@ -13,6 +13,7 @@
  */
 const { mcpEnvPairsToObject } = require("./injectMcp.cjs");
 const { ensureClaudeConfig } = require("./claudeConfig.cjs");
+const { readClaudeModelCatalog } = require("./nativeModelCatalog.cjs");
 
 // Built-in tools that need interactive UI netcatty doesn't provide - they would
 // hang the turn waiting for a response, so they are blocked in BOTH modes.
@@ -283,18 +284,31 @@ async function runClaudeTurn({ prompt, attachments, options, emitter, queryFn })
   }
 }
 
-/** Map claude-agent-sdk ModelInfo[] -> renderer preset shape {id,name,description}. */
+/**
+ * Map claude-agent-sdk ModelInfo[] -> renderer preset shape {id,name,description}.
+ *
+ * SDK types declare {value, displayName, description}, but Claude Code's
+ * `supportedModels()` control response can return {id, name} at runtime (same
+ * wire-shape mismatch already documented and fixed for CodeBuddy in
+ * mapCodebuddyModels). Accept id / modelId / value so a successful live fetch
+ * is not silently emptied and the UI does not fall back to curated presets.
+ */
 function mapClaudeModels(models) {
   if (!Array.isArray(models)) return [];
   return models
-    .filter((m) => m && m.value)
-    .map((m) => ({
-      id: m.value,
-      name: m.displayName || m.value,
-      description: m.description,
-      thinkingLevels: ["low", "medium", "high", "max"],
-      defaultThinkingLevel: "medium",
-    }));
+    .map((m) => {
+      if (!m) return null;
+      const id = m.id || m.modelId || m.value;
+      if (!id) return null;
+      return {
+        id,
+        name: m.name || m.displayName || id,
+        description: m.description,
+        thinkingLevels: ["low", "medium", "high", "max"],
+        defaultThinkingLevel: "medium",
+      };
+    })
+    .filter(Boolean);
 }
 
 /**
@@ -313,6 +327,13 @@ async function listClaudeModels({
   abortController,
   signal,
 }) {
+  // Prefer Claude Code's own model-catalog cache (written when the CLI pulls
+  // the account catalog). It carries per-model thinking levels and tracks new
+  // models (Fable/Opus 5.x) without spawning a session (#3496).
+  // Skip when queryFn is injected (tests exercise the SDK path).
+  const cached = queryFn ? null : readClaudeModelCatalog(env);
+  if (cached && cached.length > 0) return cached;
+
   ensureClaudeConfig();
   const externalSignal = signal || abortController?.signal;
   if (externalSignal?.aborted) return [];

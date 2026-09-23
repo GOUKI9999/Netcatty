@@ -22,11 +22,13 @@ test("getDriver throws on unknown backend", () => {
   assert.throws(() => getDriver("gemini"), /No SDK driver registered for backend: gemini/);
 });
 
-test("SDK drivers expose listModels; codex returns [] (no catalog)", async () => {
+test("SDK drivers expose listModels; codex returns [] without a local cache", async () => {
   for (const key of ["claude", "codebuddy", "codex", "copilot", "cursor", "grok", "opencode"]) {
     assert.equal(typeof getDriver(key).listModels, "function", `${key} must expose listModels`);
   }
-  assert.deepEqual(await getDriver("codex").listModels({}), []);
+  // Point HOME/USERPROFILE at a missing dir so models_cache.json is absent.
+  const emptyEnv = { HOME: "/nonexistent-netcatty-home", USERPROFILE: "/nonexistent-netcatty-home" };
+  assert.deepEqual(await getDriver("codex").listModels({ env: emptyEnv }), []);
 });
 
 test("CodeBuddy keeps V2 for SessionOptions fields and falls back for query-only fields", () => {

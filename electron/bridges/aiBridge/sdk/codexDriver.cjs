@@ -14,6 +14,7 @@
  * smoke confirms end-to-end behavior.
  */
 const { mcpEnvPairsToObject } = require("./injectMcp.cjs");
+const { readCodexModelCatalog } = require("./nativeModelCatalog.cjs");
 
 function isImageAttachment(attachment) {
   return Boolean(
@@ -407,6 +408,16 @@ async function runCodexTurn({
   }
 }
 
+/**
+ * List Codex models from the CLI's own `~/.codex/models_cache.json`
+ * (account catalog cache written after login / model pull). Returns [] when
+ * the cache is missing so callers can fall back to App Server `model/list`.
+ * @param {{ env?: object }} [args]
+ */
+function listCodexModels({ env } = {}) {
+  return readCodexModelCatalog(env) || [];
+}
+
 module.exports = {
   buildCodexConstructorOptions,
   buildCodexThreadOptions,
@@ -415,4 +426,5 @@ module.exports = {
   translateCodexEvent,
   runCodexTurn,
   toCodexMcpConfig,
+  listCodexModels,
 };

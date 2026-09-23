@@ -840,16 +840,28 @@ export const OPENCODE_MODEL_PRESETS: AgentModelPreset[] = [
 // public Grok Build / xAI coding agent lineup; live discovery still overrides.
 export const GROK_MODEL_PRESETS: AgentModelPreset[] = [
   {
-    id: 'grok-4.5',
-    name: 'Grok 4.5',
+    id: 'grok-4.7',
+    name: 'Grok 4.7',
     description: 'Default',
-    thinkingLevels: ['high', 'medium', 'low'],
+    thinkingLevels: ['xhigh', 'high', 'medium', 'low'],
+    defaultThinkingLevel: 'high',
+  },
+  {
+    id: 'grok-4.7-build-fast',
+    name: 'Grok 4.7 Build Fast',
+    thinkingLevels: ['xhigh', 'high', 'medium', 'low'],
     defaultThinkingLevel: 'high',
   },
   {
     id: 'grok-4.6',
     name: 'Grok 4.6',
     thinkingLevels: ['xhigh', 'high', 'medium', 'low'],
+    defaultThinkingLevel: 'high',
+  },
+  {
+    id: 'grok-4.5',
+    name: 'Grok 4.5',
+    thinkingLevels: ['high', 'medium', 'low'],
     defaultThinkingLevel: 'high',
   },
 ];

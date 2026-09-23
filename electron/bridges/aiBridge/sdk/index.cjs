@@ -75,8 +75,12 @@ const DRIVER_REGISTRY = {
         signal: ctx.signal,
       });
     },
-    // codex-sdk exposes no model catalog; the UI falls back to curated presets.
-    async listModels() { return []; },
+    // Prefer the CLI's own models_cache.json; list-models (sdkStreamHandlers)
+    // falls back to the App Server `model/list` RPC when this is empty so the
+    // UI tracks the live account catalog instead of frozen curated presets.
+    async listModels(ctx) {
+      return codex.listCodexModels({ env: ctx.env });
+    },
   },
   copilot: {
     async runTurn(ctx) {

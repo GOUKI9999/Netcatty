@@ -253,7 +253,10 @@ export function normalizeStoredAgentModelSelection(
 
 export function shouldLoadSdkRuntimeModels(agent?: ExternalAgentConfig): boolean {
   const sdkBackend = getExternalAgentSdkBackend(agent);
-  return (sdkBackend === 'codex' && agent?.codexRuntime === 'app-server')
+  // Codex is included even for the SDK turn runtime: codex-sdk has no model
+  // catalog, but list-models falls back to the App Server `model/list` RPC so
+  // the picker tracks the live account catalog instead of frozen presets.
+  return sdkBackend === 'codex'
     || sdkBackend === 'claude'
     || sdkBackend === 'copilot'
     || sdkBackend === 'cursor'

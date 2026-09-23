@@ -16,6 +16,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { prepareCommandForSpawn } = require("../../ai/shellUtils.cjs");
 const { mcpEnvPairsToObject } = require("./injectMcp.cjs");
+const { readGrokModelCatalog } = require("./nativeModelCatalog.cjs");
 
 const NETCATTY_MCP_NAME = "netcatty-remote-hosts";
 const GROK_ABORT_GRACE_MS = 1_500;
@@ -39,6 +40,16 @@ const GROK_REASONING_FALLBACKS = Object.freeze({
   },
   "grok-4.6": {
     name: "Grok 4.6",
+    thinkingLevels: ["xhigh", "high", "medium", "low"],
+    defaultThinkingLevel: "high",
+  },
+  "grok-4.7": {
+    name: "Grok 4.7",
+    thinkingLevels: ["xhigh", "high", "medium", "low"],
+    defaultThinkingLevel: "high",
+  },
+  "grok-4.7-build-fast": {
+    name: "Grok 4.7 Build Fast",
     thinkingLevels: ["xhigh", "high", "medium", "low"],
     defaultThinkingLevel: "high",
   },
@@ -986,6 +997,18 @@ async function listGrokModels({
   abortGraceMs = GROK_ABORT_GRACE_MS,
   forceKillImpl,
 } = {}) {
+  // Prefer Grok's own models_cache.json (written from cli-chat-proxy.grok.com
+  // /v1/models). It includes per-model reasoning efforts without spawning.
+  // Skip when spawnImpl is injected (tests exercise the CLI path).
+  const cached = spawnImpl ? null : readGrokModelCatalog(env);
+  if (cached && cached.length > 0) {
+    const models = cached.map((model) => applyGrokReasoningFallback(model));
+    return {
+      currentModelId: resolveGrokCatalogCurrentModelId(models, null),
+      models,
+    };
+  }
+
   const cliPath = String(binPath || "").trim();
   if (!cliPath) return { currentModelId: null, models: [] };
   const abortSignal = signal || abortController?.signal;

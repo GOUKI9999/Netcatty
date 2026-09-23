@@ -922,7 +922,27 @@ function registerSdkStreamHandlers(ctx) {
               MODEL_LIST_TIMEOUT_MS,
               abortController,
             );
-            const { currentModelId, models } = normalizeSdkListModelsResult(raw);
+            let { currentModelId, models } = normalizeSdkListModelsResult(raw);
+            // codex-sdk exposes no model catalog (driver.listModels returns []).
+            // When the SDK path yields nothing, ask the App Server `model/list`
+            // RPC so the picker tracks the live account catalog instead of the
+            // frozen curated presets (#3496).
+            if (backendKey === "codex" && models.length === 0 && !currentModelId) {
+              try {
+                const fallbackRaw = await withTimeout(
+                  codexAppServerRuntime.listModels({ binPath, env }),
+                  MODEL_LIST_TIMEOUT_MS,
+                  abortController,
+                );
+                const fallback = normalizeSdkListModelsResult(fallbackRaw);
+                if (fallback.models.length > 0 || fallback.currentModelId) {
+                  currentModelId = fallback.currentModelId;
+                  models = fallback.models;
+                }
+              } catch {
+                // Keep empty; renderer falls back to curated presets.
+              }
+            }
             // Do not cache degraded empty catalogs: listOpenCodeModels and
             // other drivers often return [] on timeout/startup failure, and
             // pinning that for TTL would block recovery (matches renderer

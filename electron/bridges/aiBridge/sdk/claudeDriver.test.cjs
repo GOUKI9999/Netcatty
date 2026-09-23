@@ -122,11 +122,11 @@ test("classifyClaudeSpawnError detects code:ENOENT", () => {
   assert.equal(classifyClaudeSpawnError(e).isSpawnEnoent, true);
 });
 
-test("mapClaudeModels maps {value,displayName,description} -> {id,name,description} and drops value-less", () => {
+test("mapClaudeModels maps {value,displayName,description} -> {id,name,description} and drops id-less", () => {
   const out = mapClaudeModels([
     { value: "claude-opus-4-6", displayName: "Opus 4.6", description: "Recommended" },
     { value: "claude-sonnet-4-6", displayName: "Sonnet 4.6" },
-    { displayName: "no value -> dropped" },
+    { displayName: "no id/value -> dropped" },
   ]);
   assert.deepEqual(out, [
     {
@@ -145,6 +145,20 @@ test("mapClaudeModels maps {value,displayName,description} -> {id,name,descripti
     },
   ]);
   assert.deepEqual(mapClaudeModels(null), []);
+});
+
+test("mapClaudeModels accepts CLI wire shape {id, name} (supportedModels runtime)", () => {
+  const out = mapClaudeModels([
+    { id: "claude-opus-5-5", name: "Opus 5.5" },
+    { id: "claude-sonnet-5", name: "Sonnet 5" },
+    { modelId: "claude-fable-5-1", displayName: "Fable 5.1" },
+  ]);
+  assert.deepEqual(out.map((m) => m.id), [
+    "claude-opus-5-5",
+    "claude-sonnet-5",
+    "claude-fable-5-1",
+  ]);
+  assert.deepEqual(out.map((m) => m.name), ["Opus 5.5", "Sonnet 5", "Fable 5.1"]);
 });
 
 test("splitClaudeModelSelection only treats known trailing effort as thinking", () => {
