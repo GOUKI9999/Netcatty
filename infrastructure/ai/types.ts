@@ -836,15 +836,14 @@ export const OPENCODE_MODEL_PRESETS: AgentModelPreset[] = [
   { id: 'ollama/llama3.3', name: 'Ollama Llama 3.3' },
 ];
 
-// Curated MiMo Code models when live discovery is unavailable. IDs mirror the
-// vendor-documented MiMo lineup as served by the CLI's own model catalog; live
-// discovery still overrides.
-// TODO(mimo): confirm these ids against `mimo models` on v0.1.15+ (the CLI is an
-// OpenCode fork, so catalog ids may not be prefixed the way these are).
+// Curated MiMo Code models when live discovery is unavailable. IDs read from
+// the CLI's own catalog (`mimo serve` + `config.providers()`) on v0.1.15: the
+// vendor provider is `xiaomi` and ids are lower-case, provider-prefixed.
+// Live discovery still overrides.
 export const MIMO_MODEL_PRESETS: AgentModelPreset[] = [
-  { id: 'mimo-v2.5', name: 'MiMo V2.5' },
-  { id: 'MiMo-V2.6-Pro', name: 'MiMo V2.6 Pro' },
-  { id: 'MiMo-V2.6-Flash', name: 'MiMo V2.6 Flash' },
+  { id: 'xiaomi/mimo-v2.5', name: 'MiMo V2.5' },
+  { id: 'xiaomi/mimo-v2.6-pro', name: 'MiMo V2.6 Pro' },
+  { id: 'xiaomi/mimo-v2.6-flash', name: 'MiMo V2.6 Flash' },
 ];
 
 // Curated Grok Build models when `grok models` is unavailable. IDs mirror the

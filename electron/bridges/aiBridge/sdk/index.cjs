@@ -18,6 +18,7 @@ const codebuddy = require("./codebuddyDriver.cjs");
 const opencode = require("./opencodeDriver.cjs");
 const grok = require("./grokDriver.cjs");
 const grokAcp = require("./grokAcpDriver.cjs");
+const mimo = require("./mimoDriver.cjs");
 const { codebuddySessionManager } = require("./codebuddySessionManager.cjs");
 
 function hasCodebuddyQueryOnlyOptions(options) {
@@ -391,12 +392,38 @@ const DRIVER_REGISTRY = {
       };
     },
   },
-  // TODO(mimo): register the MiMo Code driver here once `@mimo-ai/sdk` is a
-  // dependency and the SDK-parity probe confirms createOpencode/createOpencodeClient
-  // behave like @opencode-ai/sdk. Until then `mimo` is discoverable and
-  // configurable in Settings, but run-turn / list-models reject it with
-  // "Unknown SDK backend: mimo". Add "mimo" to index.test.cjs backend list in
-  // the same pass.
+  // MiMo Code is an OpenCode fork, so this mirrors the opencode entry above.
+  // The driver runs `mimo serve` itself instead of `@mimo-ai/sdk`'s
+  // createOpencode(), which cannot parse MiMo's readiness banner; see
+  // mimoDriver.cjs for the details.
+  mimo: {
+    async runTurn(ctx) {
+      return mimo.runMimoTurn({
+        prompt: ctx.prompt,
+        systemPrompt: ctx.systemPrompt,
+        attachments: ctx.attachments,
+        cwd: ctx.cwd,
+        model: ctx.model,
+        env: ctx.env,
+        binPath: ctx.binPath,
+        injectedMcpServers: ctx.injectedMcpServers,
+        toolIntegrationMode: ctx.toolIntegrationMode,
+        skillsPathAllowlist: ctx.skillsPathAllowlist,
+        resumeSessionId: ctx.resumeSessionId,
+        emitter: ctx.emitter,
+        abortController: ctx.abortController,
+      });
+    },
+    async listModels(ctx) {
+      return mimo.listMimoModels({
+        env: ctx.env,
+        binPath: ctx.binPath,
+        cwd: ctx.cwd,
+        abortController: ctx.abortController,
+        signal: ctx.abortController?.signal || ctx.signal,
+      });
+    },
+  },
 };
 function getDriver(backend) {
   const driver = DRIVER_REGISTRY[backend];

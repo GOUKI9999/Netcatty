@@ -920,6 +920,7 @@ module.exports = {
   classifyOpenCodeSpawnError,
   closeOpenCodeInstance,
   createOpenCodeProcessEnv,
+  getOpenCodeDefaultModelId,
   withOpenCodeProcessEnv,
   listOpenCodeModels,
   mapOpenCodeModels,
