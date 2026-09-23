@@ -229,10 +229,36 @@ function extractMimoErrorMessage(error) {
   return String(error.data?.message || error.message || error.name || "");
 }
 
+// translateOpenCodeEvent() is shared with the OpenCode driver, so the
+// status/error text it emits is OpenCode-branded. MiMo Code is a rebrand, so
+// swap the brand at the emitter boundary instead of forking the translator.
+// Only strings our own code generates are rewritten; model and tool output
+// passes through untouched.
+const MIMO_BRAND = "MiMo Code";
+const OPENCODE_BRAND = "OpenCode";
+// Fallback text translateOpenCodeEvent() uses when a tool part carries neither
+// an error nor an output payload.
+const OPENCODE_TOOL_FAILED = "OpenCode tool failed";
+
+function createMiMoEmitter(emitter) {
+  const rebrand = (text) => (typeof text === "string" ? text.replaceAll(OPENCODE_BRAND, MIMO_BRAND) : text);
+  return {
+    ...emitter,
+    status: (message) => emitter.status(rebrand(message)),
+    emitError: (error) => emitter.emitError(rebrand(error)),
+    toolResult: (callId, output, toolName) => emitter.toolResult(
+      callId,
+      output === OPENCODE_TOOL_FAILED ? `${MIMO_BRAND} tool failed` : output,
+      toolName,
+    ),
+  };
+}
+
 async function runMimoTurn({
   prompt, systemPrompt, attachments, cwd, model, injectedMcpServers, toolIntegrationMode,
   skillsPathAllowlist, resumeSessionId, env, binPath, emitter, abortController, mimoFactory,
 }) {
+  const emit = createMiMoEmitter(emitter);
   const config = buildOpenCodeConfig({ model, injectedMcpServers, toolIntegrationMode, skillsPathAllowlist });
   let instance = null;
   let sessionId = resumeSessionId || null;
@@ -275,7 +301,7 @@ async function runMimoTurn({
       sessionId = created?.data?.id || created?.id || null;
     }
     if (!sessionId) throw new Error("MiMo Code did not create a session");
-    emitter.sessionId(sessionId);
+    emit.sessionId(sessionId);
 
     const stopEventLoopWait = createStopWait();
     const eventLoop = (async () => {
@@ -299,7 +325,7 @@ async function runMimoTurn({
           const { value: event, done } = raced.value;
           if (done) break;
           if (abortController?.signal?.aborted) break;
-          const result = translateOpenCodeEvent(event, emitter, state);
+          const result = translateOpenCodeEvent(event, emit, state);
           if (result.content) hasContent = true;
           if (result.error) {
             failed = true;
@@ -359,17 +385,17 @@ async function runMimoTurn({
     }
 
     if (!hasContent && !failed && !abortController?.signal?.aborted) {
-      emitter.emitError("MiMo Code returned an empty response. Run `mimo` in a terminal to configure authentication and models.");
+      emit.emitError("MiMo Code returned an empty response. Run `mimo` in a terminal to configure authentication and models.");
       return { sessionId };
     }
-    if (!failed && !abortController?.signal?.aborted) emitter.emitDone();
+    if (!failed && !abortController?.signal?.aborted) emit.emitDone();
     return { sessionId };
   } catch (error) {
     const classified = classifyOpenCodeSpawnError(error);
     if (classified.isSpawnEnoent) {
-      emitter.emitError("MiMo Code CLI not found or not runnable. Install MiMo Code and ensure `mimo` is on PATH, or set a custom path in Settings.");
+      emit.emitError("MiMo Code CLI not found or not runnable. Install MiMo Code and ensure `mimo` is on PATH, or set a custom path in Settings.");
     } else {
-      emitter.emitError(extractMimoErrorMessage(error) || classified.message || "MiMo Code turn failed");
+      emit.emitError(extractMimoErrorMessage(error) || classified.message || "MiMo Code turn failed");
     }
     return { sessionId };
   } finally {
