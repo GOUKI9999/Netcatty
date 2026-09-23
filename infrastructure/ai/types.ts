@@ -281,7 +281,7 @@ export interface ExternalAgentConfig {
   icon?: string;
   enabled: boolean;
   available?: boolean;
-  /** SDK backend key for managed agents (claude|codex|copilot|cursor|codebuddy|opencode|grok). */
+  /** SDK backend key for managed agents (claude|codex|copilot|cursor|codebuddy|opencode|grok|mimo). */
   sdkBackend?: string;
   /** Cursor only: mutually exclusive auth — API key vs local `cursor-agent` CLI login. */
   cursorAuthMode?: CursorAuthMode;
@@ -347,8 +347,8 @@ export interface DiscoveredAgent {
   /** @deprecated Legacy discovery field from the pre-SDK migration. */
   acpCommand?: string;
   acpArgs?: string[];
-  /** SDK backend key (claude|codex|copilot|cursor|codebuddy|opencode|grok) — the routing value. */
-  sdkBackend?: 'claude' | 'codex' | 'copilot' | 'cursor' | 'codebuddy' | 'opencode' | 'grok';
+  /** SDK backend key (claude|codex|copilot|cursor|codebuddy|opencode|grok|mimo) — the routing value. */
+  sdkBackend?: 'claude' | 'codex' | 'copilot' | 'cursor' | 'codebuddy' | 'opencode' | 'grok' | 'mimo';
   /** Absolute resolved CLI path (preferred over `path`). */
   binPath?: string;
   installed?: boolean;
@@ -836,6 +836,17 @@ export const OPENCODE_MODEL_PRESETS: AgentModelPreset[] = [
   { id: 'ollama/llama3.3', name: 'Ollama Llama 3.3' },
 ];
 
+// Curated MiMo Code models when live discovery is unavailable. IDs mirror the
+// vendor-documented MiMo lineup as served by the CLI's own model catalog; live
+// discovery still overrides.
+// TODO(mimo): confirm these ids against `mimo models` on v0.1.15+ (the CLI is an
+// OpenCode fork, so catalog ids may not be prefixed the way these are).
+export const MIMO_MODEL_PRESETS: AgentModelPreset[] = [
+  { id: 'mimo-v2.5', name: 'MiMo V2.5' },
+  { id: 'MiMo-V2.6-Pro', name: 'MiMo V2.6 Pro' },
+  { id: 'MiMo-V2.6-Flash', name: 'MiMo V2.6 Flash' },
+];
+
 // Curated Grok Build models when `grok models` is unavailable. IDs mirror the
 // public Grok Build / xAI coding agent lineup; live discovery still overrides.
 export const GROK_MODEL_PRESETS: AgentModelPreset[] = [
@@ -880,6 +891,7 @@ export function getAgentModelPresets(
   if (backend === 'codebuddy') return CODEBUDDY_MODEL_PRESETS;
   if (backend === 'opencode') return OPENCODE_MODEL_PRESETS;
   if (backend === 'grok') return GROK_MODEL_PRESETS;
+  if (backend === 'mimo') return MIMO_MODEL_PRESETS;
 
   if (!agentCommand) return [];
   // Split on both POSIX (/) and Windows (\) separators so command paths like
@@ -899,6 +911,7 @@ export function getAgentModelPresets(
   if (basename.startsWith('codebuddy')) return CODEBUDDY_MODEL_PRESETS;
   if (basename.startsWith('opencode')) return OPENCODE_MODEL_PRESETS;
   if (basename.startsWith('grok')) return GROK_MODEL_PRESETS;
+  if (basename.startsWith('mimo')) return MIMO_MODEL_PRESETS;
   return [];
 }
 

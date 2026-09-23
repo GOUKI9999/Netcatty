@@ -391,6 +391,12 @@ const DRIVER_REGISTRY = {
       };
     },
   },
+  // TODO(mimo): register the MiMo Code driver here once `@mimo-ai/sdk` is a
+  // dependency and the SDK-parity probe confirms createOpencode/createOpencodeClient
+  // behave like @opencode-ai/sdk. Until then `mimo` is discoverable and
+  // configurable in Settings, but run-turn / list-models reject it with
+  // "Unknown SDK backend: mimo". Add "mimo" to index.test.cjs backend list in
+  // the same pass.
 };
 function getDriver(backend) {
   const driver = DRIVER_REGISTRY[backend];
