@@ -107,9 +107,9 @@ import {
 import { handleSerialLineModeInput } from "./serialLineInput";
 import { isTerminalReportSequence } from "./terminalReportSequence";
 import {
-  doesKittyEncodingPreserveShiftEnter,
   getShiftEnterSubmittedInput,
   resolveShiftEnterText,
+  shouldClaimShiftEnterForText,
   shouldSendShiftEnterText,
 } from "./shiftEnterText";
 import {
@@ -1587,6 +1587,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     `${identity}\u0000mac-period-interrupt`;
   const broadcastEncodedKeys = new Set<string>();
   const broadcastLegacySuppressedKeys = new Set<string>();
+  const broadcastWin32ShiftEnterTextKeys = new Set<string>();
   const kittyKeyIdentity = (event: KeyboardEvent): string => event.code || event.key;
   let handlingKittyBroadcast = false;
   let suppressNextTerminalDataBroadcast = false;
@@ -2438,12 +2439,14 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     // shiftEnterForceText opts out of the Win32 hand-off for runtimes that
     // cannot consume INPUT_RECORD modifiers (Node/Bun via libuv, e.g. Claude
     // Code and CodeBuddy): they collapse Shift+Enter to a bare CR anyway, so
-    // sending the configured sequence is the only distinguishable input.
+    // sending the configured sequence is the only distinguishable input. The
+    // opt-out is scoped to Win32 input mode: elsewhere a negotiated Kitty
+    // encoding that preserves Shift+Enter must still win.
     if (
-      shouldSendShiftEnterText(e, ctx.terminalSettingsRef.current) &&
-      (ctx.terminalSettingsRef.current?.shiftEnterForceText === true ||
-        (!term.modes.win32InputMode &&
-          !doesKittyEncodingPreserveShiftEnter(kittySequenceForKeyDown)))
+      shouldClaimShiftEnterForText(e, ctx.terminalSettingsRef.current, {
+        win32InputMode: term.modes.win32InputMode,
+        kittySequenceForKeyDown,
+      })
     ) {
       const id = ctx.sessionRef.current;
       if (id) {
@@ -2726,6 +2729,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     clearKittyKeyboardBroadcastPairingState(
       broadcastEncodedKeys,
       broadcastLegacySuppressedKeys,
+      broadcastWin32ShiftEnterTextKeys,
     );
     win32BroadcastForwardedKeys.clear();
     clearBroadcastLegacyDataPending();
@@ -2999,6 +3003,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       legacySuppressedKeys: broadcastLegacySuppressedKeys,
       win32InputMode: term.modes.win32InputMode,
       shiftEnterSettings: ctx.terminalSettingsRef.current,
+      win32ShiftEnterTextKeys: broadcastWin32ShiftEnterTextKeys,
     }),
     getSessionId: () => ctx.sessionRef.current,
     isSensitiveInput: () => ctx.passwordPromptActiveRef?.current === true,
