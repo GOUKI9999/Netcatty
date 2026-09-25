@@ -921,6 +921,7 @@ module.exports = {
   closeOpenCodeInstance,
   createOpenCodeProcessEnv,
   getOpenCodeDefaultModelId,
+  getOpenCodeSessionIdFromEvent,
   withOpenCodeProcessEnv,
   listOpenCodeModels,
   mapOpenCodeModels,

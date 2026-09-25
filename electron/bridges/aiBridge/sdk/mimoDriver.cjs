@@ -27,6 +27,7 @@ const {
   buildOpenCodePromptParts,
   classifyOpenCodeSpawnError,
   getOpenCodeDefaultModelId,
+  getOpenCodeSessionIdFromEvent,
   mapOpenCodeModels,
   parseOpenCodeModel,
   translateOpenCodeEvent,
@@ -70,14 +71,41 @@ function resolveUsableMimoBinPath(binPath, env) {
   return undefined;
 }
 
-function stopMimoProcess(child) {
+// How long the server's process group gets to exit on SIGTERM before the
+// remaining members are killed outright.
+const MIMO_STOP_GRACE_MS = 2000;
+
+function killProcessGroup(pid, signal) {
+  process.kill(-pid, signal);
+}
+
+function stopMimoProcess(child, {
+  platform = process.platform,
+  killGroup = killProcessGroup,
+  graceMs = MIMO_STOP_GRACE_MS,
+} = {}) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
   // `mimo` is launched through cmd.exe when the resolved path is the npm .cmd
   // shim, so killing the direct child can orphan the real server. Kill the
   // whole tree instead (same approach the SDK's own stop() uses).
-  if (process.platform === "win32" && child.pid) {
+  if (platform === "win32" && child.pid) {
     const out = spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
     if (!out.error && out.status === 0) return;
+  }
+  // On macOS/Linux the official npm package's `mimo` is a Node shim that runs
+  // the native binary through spawnSync, so signalling only the shim leaves
+  // the server listening. spawnMimoServer starts it detached, making the pid
+  // the leader of its own process group: signal the whole group, then kill
+  // whatever ignored SIGTERM once the grace period is over.
+  if (platform !== "win32" && child.pid) {
+    try {
+      killGroup(child.pid, "SIGTERM");
+      const timer = setTimeout(() => {
+        try { killGroup(child.pid, "SIGKILL"); } catch {}
+      }, graceMs);
+      timer.unref?.();
+      return;
+    } catch {}
   }
   try { child.kill(); } catch {}
 }
@@ -130,6 +158,9 @@ async function spawnMimoServer({
     env: childEnv,
     shell: spawnSpec.shell,
     stdio: ["ignore", "pipe", "pipe"],
+    // Own process group on POSIX so stopMimoProcess can reach the native
+    // server behind the npm shim. Windows uses taskkill /T instead.
+    detached: process.platform !== "win32",
     windowsHide: true,
   });
 
@@ -325,6 +356,11 @@ async function runMimoTurn({
           const { value: event, done } = raced.value;
           if (done) break;
           if (abortController?.signal?.aborted) break;
+          // The global event stream carries every session on this server.
+          // Only translate our own, so another session's text or idle event
+          // can neither leak into this reply nor end it early.
+          const eventSessionId = getOpenCodeSessionIdFromEvent(event);
+          if (eventSessionId && eventSessionId !== sessionId) continue;
           const result = translateOpenCodeEvent(event, emit, state);
           if (result.content) hasContent = true;
           if (result.error) {
@@ -466,4 +502,5 @@ module.exports = {
   spawnMimoServer,
   stopMimoProcess,
   MIMO_SERVE_TIMEOUT_MS,
+  MIMO_STOP_GRACE_MS,
 };

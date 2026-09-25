@@ -124,6 +124,9 @@ test("spawnMimoServer launches `mimo serve` with hostname/port argv and passes M
     assert.equal(options.shell, false);
     assert.deepEqual(options.stdio, ["ignore", "pipe", "pipe"]);
     assert.equal(options.windowsHide, true);
+    // POSIX needs its own process group so close() can reach the native
+    // server behind the npm shim.
+    assert.equal(options.detached, process.platform !== "win32");
     assert.equal(options.env.MIMOCODE_CONFIG_CONTENT, JSON.stringify({ autoupdate: false }));
     assert.equal(options.env.MIMOCODE_BIN, bin);
     assert.equal(options.env.NETCATTY_TEST, "1");
@@ -305,17 +308,40 @@ test("stopMimoProcess uses taskkill /T /F for a live pid on Windows, else the di
   child.pid = 4242;
 
   try {
-    stopMimoProcess(child);
-    if (process.platform === "win32") {
-      assert.deepEqual(calls, [{ command: "taskkill", args: ["/pid", "4242", "/T", "/F"], options: { windowsHide: true } }]);
-      assert.equal(child.killCount, 0);
-    } else {
-      assert.equal(calls.length, 0);
-      assert.equal(child.killCount, 1);
-    }
+    stopMimoProcess(child, { platform: "win32" });
+    assert.deepEqual(calls, [{ command: "taskkill", args: ["/pid", "4242", "/T", "/F"], options: { windowsHide: true } }]);
+    assert.equal(child.killCount, 0);
   } finally {
     spawnSyncMock = null;
   }
+});
+
+test("stopMimoProcess signals the whole process group on POSIX and escalates to SIGKILL", async () => {
+  for (const platform of ["darwin", "linux"]) {
+    const signals = [];
+    const child = fakeChild();
+    child.pid = 4242;
+    stopMimoProcess(child, {
+      platform,
+      killGroup: (pid, signal) => signals.push([pid, signal]),
+      graceMs: 0,
+    });
+    // The shim alone must not be the target: its native child would survive.
+    assert.equal(child.killCount, 0, platform);
+    assert.deepEqual(signals, [[4242, "SIGTERM"]], platform);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.deepEqual(signals, [[4242, "SIGTERM"], [4242, "SIGKILL"]], platform);
+  }
+
+  // If the group cannot be signalled, fall back to the direct child.
+  const child = fakeChild();
+  child.pid = 4242;
+  stopMimoProcess(child, {
+    platform: "linux",
+    killGroup: () => { throw Object.assign(new Error("no such group"), { code: "ESRCH" }); },
+    graceMs: 0,
+  });
+  assert.equal(child.killCount, 1);
 });
 
 test("runMimoTurn creates a session, streams deltas, and returns the session id", async () => {
@@ -358,6 +384,46 @@ test("runMimoTurn creates a session, streams deltas, and returns the session id"
   assert.deepEqual(events, [
     { k: "sessionId", s: "sess-1" },
     { k: "text", t: "hi" },
+    { k: "status", m: "MiMo Code session idle" },
+    { k: "done" },
+  ]);
+});
+
+test("runMimoTurn ignores events from other sessions on the shared global stream", async () => {
+  const { events, emitter } = collector();
+  let releaseStream;
+  const stream = {
+    async *[Symbol.asyncIterator]() {
+      await new Promise((resolve) => { releaseStream = resolve; });
+      // Another session's reply and idle arrive first on the global stream.
+      yield { payload: { type: "message.part.updated", properties: { part: { type: "text", id: "o1", text: "other", sessionID: "other-session" }, delta: "other" } } };
+      yield { payload: { type: "session.idle", properties: { sessionID: "other-session" } } };
+      yield { payload: { type: "message.part.updated", properties: { part: { type: "text", id: "p1", text: "mine", sessionID: "own-session" }, delta: "mine" } } };
+      yield { payload: { type: "session.idle", properties: { sessionID: "own-session" } } };
+    },
+  };
+  const client = {
+    global: { event: async () => ({ stream }) },
+    session: {
+      create: async () => ({ data: { id: "own-session" } }),
+      promptAsync: async () => {
+        releaseStream();
+        return { data: true };
+      },
+    },
+  };
+
+  const result = await runMimoTurn({
+    prompt: "hello",
+    emitter,
+    abortController: new AbortController(),
+    mimoFactory: async () => ({ client, server: { close() {} } }),
+  });
+
+  assert.deepEqual(result, { sessionId: "own-session" });
+  assert.deepEqual(events, [
+    { k: "sessionId", s: "own-session" },
+    { k: "text", t: "mine" },
     { k: "status", m: "MiMo Code session idle" },
     { k: "done" },
   ]);
