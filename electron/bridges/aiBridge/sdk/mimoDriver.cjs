@@ -289,6 +289,15 @@ function createAbortWait(signal) {
   };
 }
 
+async function awaitMimoSetup(promise, signal) {
+  const abortWait = createAbortWait(signal);
+  try {
+    return await Promise.race([promise, abortWait.promise.then(() => null)]);
+  } finally {
+    abortWait.dispose();
+  }
+}
+
 function createStopWait() {
   let stopped = false;
   let resolveStop;
@@ -375,26 +384,45 @@ async function runMimoTurn({
       abortController.signal.addEventListener("abort", onAbort, { once: true });
       removeAbortListener = () => abortController.signal.removeEventListener("abort", onAbort);
     }
-    const events = await client.global.event({ signal: abortController?.signal });
+    if (abortController?.signal?.aborted) {
+      await abortMimo();
+      return { sessionId };
+    }
+    const events = await awaitMimoSetup(client.global.event({ signal: abortController?.signal }), abortController?.signal);
+    if (abortController?.signal?.aborted) return { sessionId };
+    const iterator = events?.stream?.[Symbol.asyncIterator]?.();
+    if (!iterator) throw new Error("MiMo Code did not provide an event stream");
+    // The SDK stream is lazy: its first read opens the SSE connection. Wait
+    // for that first event before sending a prompt, or a fast reply can be
+    // missed entirely. Keep the event to process after session creation.
+    const firstEvent = await awaitMimoSetup(iterator.next(), abortController?.signal);
+    if (abortController?.signal?.aborted) {
+      try { void iterator.return?.(); } catch {}
+      return { sessionId };
+    }
+    if (!firstEvent || firstEvent.done) throw new Error("MiMo Code event stream closed before the session started");
 
     if (!sessionId) {
-      const created = await client.session.create({
+      const created = await awaitMimoSetup(client.session.create({
         body: { title: "Netcatty MiMo Code" },
         query: directoryQuery,
-      });
+      }), abortController?.signal);
+      if (abortController?.signal?.aborted) {
+        try { void iterator.return?.(); } catch {}
+        return { sessionId };
+      }
       sessionId = created?.data?.id || created?.id || null;
     }
+    if (abortController?.signal?.aborted) return { sessionId };
     if (!sessionId) throw new Error("MiMo Code did not create a session");
     emit.sessionId(sessionId);
 
     const stopEventLoopWait = createStopWait();
     const eventLoop = (async () => {
-      const iterator = events.stream?.[Symbol.asyncIterator]?.();
-      if (!iterator) return;
       const abortWait = createAbortWait(abortController?.signal);
       try {
+        let nextEvent = Promise.resolve(firstEvent);
         while (true) {
-          const nextEvent = iterator.next();
           const raced = await Promise.race([
             nextEvent.then(
               (value) => ({ type: "event", value }),
@@ -413,7 +441,10 @@ async function runMimoTurn({
           // Only translate our own, so another session's text or idle event
           // can neither leak into this reply nor end it early.
           const eventSessionId = getOpenCodeSessionIdFromEvent(event);
-          if (eventSessionId && eventSessionId !== sessionId) continue;
+          if (eventSessionId && eventSessionId !== sessionId) {
+            nextEvent = iterator.next();
+            continue;
+          }
           const result = translateOpenCodeEvent(event, emit, state);
           if (result.content) hasContent = true;
           if (result.error) {
@@ -421,6 +452,7 @@ async function runMimoTurn({
             break;
           }
           if (result.idle) break;
+          nextEvent = iterator.next();
         }
       } finally {
         abortWait.dispose();
@@ -480,6 +512,7 @@ async function runMimoTurn({
     if (!failed && !abortController?.signal?.aborted) emit.emitDone();
     return { sessionId };
   } catch (error) {
+    if (abortController?.signal?.aborted) return { sessionId };
     const classified = classifyOpenCodeSpawnError(error);
     if (classified.isSpawnEnoent) {
       emit.emitError("MiMo Code CLI not found or not runnable. Install MiMo Code and ensure `mimo` is on PATH, or set a custom path in Settings.");

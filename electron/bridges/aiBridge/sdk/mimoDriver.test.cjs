@@ -43,6 +43,15 @@ function collector() {
   return { events, emitter };
 }
 
+function connectedStream(stream) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield { payload: { type: "server.connected" } };
+      yield* stream;
+    },
+  };
+}
+
 // Minimal ChildProcess stand-in with only the members spawnMimoServer touches.
 function fakeChild() {
   const child = new EventEmitter();
@@ -458,16 +467,14 @@ test("stopMimoProcess can stop a live server group after its launcher already ex
 test("runMimoTurn creates a session, streams deltas, and returns the session id", async () => {
   const { events, emitter } = collector();
   const abortController = new AbortController();
-  let releaseStream;
   const stream = {
     async *[Symbol.asyncIterator]() {
-      await new Promise((resolve) => { releaseStream = resolve; });
       yield { payload: { type: "message.part.updated", properties: { part: { type: "text", id: "p1", text: "hi" }, delta: "hi" } } };
       yield { payload: { type: "session.idle", properties: { sessionID: "sess-1" } } };
     },
   };
   const client = {
-    global: { event: async () => ({ stream }) },
+    global: { event: async () => ({ stream: connectedStream(stream) }) },
     session: {
       create: async (args) => {
         assert.deepEqual(args.query, { directory: "/repo" });
@@ -476,7 +483,6 @@ test("runMimoTurn creates a session, streams deltas, and returns the session id"
       promptAsync: async (args) => {
         assert.equal(args.path.id, "sess-1");
         assert.deepEqual(args.body.model, { providerID: "openai", modelID: "gpt-5.1" });
-        releaseStream();
         return { data: true };
       },
     },
@@ -508,12 +514,76 @@ test("runMimoTurn creates a session, streams deltas, and returns the session id"
   ]);
 });
 
-test("runMimoTurn ignores events from other sessions on the shared global stream", async () => {
+test("runMimoTurn waits for the event connection before sending a fast prompt", async () => {
   const { events, emitter } = collector();
-  let releaseStream;
+  let connect;
+  let promptCalls = 0;
   const stream = {
     async *[Symbol.asyncIterator]() {
-      await new Promise((resolve) => { releaseStream = resolve; });
+      await new Promise((resolve) => { connect = resolve; });
+      yield { payload: { type: "server.connected" } };
+      yield { payload: { type: "message.part.updated", properties: { part: { type: "text", sessionID: "sess-1", id: "p1", text: "quick" }, delta: "quick" } } };
+      yield { payload: { type: "session.idle", properties: { sessionID: "sess-1" } } };
+    },
+  };
+  const client = {
+    global: { event: async () => ({ stream }) },
+    session: {
+      create: async () => ({ data: { id: "sess-1" } }),
+      promptAsync: async () => { promptCalls += 1; return { data: true }; },
+    },
+  };
+  const running = runMimoTurn({ prompt: "hello", emitter, abortController: new AbortController(), mimoFactory: async () => ({ client, server: { close() {} } }) });
+  for (let attempt = 0; !connect && attempt < 20; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(typeof connect, "function");
+  assert.equal(promptCalls, 0);
+  connect();
+  await running;
+  assert.equal(promptCalls, 1);
+  assert.equal(events.some((event) => event.k === "text" && event.t === "quick"), true);
+  assert.equal(events.some((event) => event.k === "done"), true);
+});
+
+test("runMimoTurn silently stops while connecting the event stream", async () => {
+  const { events, emitter } = collector();
+  const abortController = new AbortController();
+  let entered;
+  const connecting = new Promise((resolve) => { entered = resolve; });
+  let closeCount = 0;
+  const client = {
+    global: { event: () => { entered(); return new Promise(() => {}); } },
+    session: { create: async () => { throw new Error("session should not be created"); } },
+  };
+  const running = runMimoTurn({ prompt: "hello", emitter, abortController, mimoFactory: async () => ({ client, server: { close() { closeCount += 1; } } }) });
+  await connecting;
+  abortController.abort(new Error("user cancelled"));
+  assert.deepEqual(await running, { sessionId: null });
+  assert.equal(closeCount >= 1, true);
+  assert.equal(events.some((event) => event.k === "error"), false);
+});
+
+test("runMimoTurn silently stops while creating the session", async () => {
+  const { events, emitter } = collector();
+  const abortController = new AbortController();
+  let entered;
+  const creating = new Promise((resolve) => { entered = resolve; });
+  let closeCount = 0;
+  const client = {
+    global: { event: async () => ({ stream: connectedStream({ async *[Symbol.asyncIterator]() { await new Promise(() => {}); } }) }) },
+    session: { create: () => { entered(); return new Promise(() => {}); } },
+  };
+  const running = runMimoTurn({ prompt: "hello", emitter, abortController, mimoFactory: async () => ({ client, server: { close() { closeCount += 1; } } }) });
+  await creating;
+  abortController.abort(new Error("user cancelled"));
+  assert.deepEqual(await running, { sessionId: null });
+  assert.equal(closeCount >= 1, true);
+  assert.equal(events.some((event) => event.k === "error"), false);
+});
+
+test("runMimoTurn ignores events from other sessions on the shared global stream", async () => {
+  const { events, emitter } = collector();
+  const stream = {
+    async *[Symbol.asyncIterator]() {
       // Another session's reply and idle arrive first on the global stream.
       yield { payload: { type: "message.part.updated", properties: { part: { type: "text", id: "o1", text: "other", sessionID: "other-session" }, delta: "other" } } };
       yield { payload: { type: "session.idle", properties: { sessionID: "other-session" } } };
@@ -522,11 +592,10 @@ test("runMimoTurn ignores events from other sessions on the shared global stream
     },
   };
   const client = {
-    global: { event: async () => ({ stream }) },
+    global: { event: async () => ({ stream: connectedStream(stream) }) },
     session: {
       create: async () => ({ data: { id: "own-session" } }),
       promptAsync: async () => {
-        releaseStream();
         return { data: true };
       },
     },
@@ -559,7 +628,7 @@ test("runMimoTurn returns promptly on abort and tears down the server without th
     },
   };
   const client = {
-    global: { event: async () => ({ stream }) },
+    global: { event: async () => ({ stream: connectedStream(stream) }) },
     session: {
       create: async () => ({ data: { id: "sess-1" } }),
       promptAsync: async () => ({ data: true }),
@@ -604,7 +673,7 @@ test("runMimoTurn passes a non-default port to the MiMo server factory", async (
     },
   };
   const client = {
-    global: { event: async () => ({ stream }) },
+    global: { event: async () => ({ stream: connectedStream(stream) }) },
     session: {
       create: async () => ({ data: { id: "sess-1" } }),
       promptAsync: async () => ({ data: true }),
@@ -631,7 +700,7 @@ test("runMimoTurn surfaces a prompt error result and still tears down the server
   let closeCount = 0;
   let abortCount = 0;
   const client = {
-    global: { event: async () => ({ stream: { async *[Symbol.asyncIterator]() { await new Promise(() => {}); } } }) },
+    global: { event: async () => ({ stream: connectedStream({ async *[Symbol.asyncIterator]() { await new Promise(() => {}); } }) }) },
     session: {
       create: async () => ({ data: { id: "sess-1" } }),
       promptAsync: async () => ({ error: { data: { message: "bad model" } } }),
@@ -664,7 +733,7 @@ test("runMimoTurn rebrands shared OpenCode status strings to MiMo Code", async (
     },
   };
   const client = {
-    global: { event: async () => ({ stream }) },
+    global: { event: async () => ({ stream: connectedStream(stream) }) },
     session: { create: async () => ({ data: { id: "sess-1" } }), promptAsync: async () => ({ data: true }) },
   };
 
@@ -688,7 +757,7 @@ test("runMimoTurn rebrands the failed and tool-failure fallbacks but leaves tool
     },
   };
   const client = {
-    global: { event: async () => ({ stream }) },
+    global: { event: async () => ({ stream: connectedStream(stream) }) },
     session: { create: async () => ({ data: { id: "sess-1" } }), promptAsync: async () => ({ data: true }) },
   };
 
@@ -710,7 +779,7 @@ test("runMimoTurn passes non-brand technical error text through unchanged", asyn
     },
   };
   const client = {
-    global: { event: async () => ({ stream }) },
+    global: { event: async () => ({ stream: connectedStream(stream) }) },
     session: { create: async () => ({ data: { id: "sess-1" } }), promptAsync: async () => ({ data: true }) },
   };
 
@@ -728,7 +797,7 @@ test("runMimoTurn reports an empty response with MiMo branding when no content a
     },
   };
   const client = {
-    global: { event: async () => ({ stream }) },
+    global: { event: async () => ({ stream: connectedStream(stream) }) },
     session: { create: async () => ({ data: { id: "sess-1" } }), promptAsync: async () => ({ data: true }) },
   };
 

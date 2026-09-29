@@ -248,3 +248,17 @@ test("MiMo native skills can read references from default and overridden roots w
   assert.equal(evaluateOpenCodeRuleMap("/opt/unrelated", rules.external_directory), "deny");
   assert.equal(evaluateOpenCodeRuleMap("/home/me/.mimocode/skills/one/references/guide.md", buildOpenCodeNativeSkillsPermissionRules().read), undefined);
 });
+
+test("MiMo native skills can read macOS built-in skill references", () => {
+  const rules = buildOpenCodeNativeSkillsPermissionRules({
+    mimo: true,
+    platform: "darwin",
+    cwd: "/Users/me/work/project",
+    env: { HOME: "/Users/me" },
+  });
+  const file = "/Users/me/Library/Application Support/mimocode/builtin_skills/0.1.15/skills/one/references/guide.md";
+  assert.equal(evaluateOpenCodeRuleMap(file, rules.read), "allow");
+  assert.equal(evaluateOpenCodeRuleMap("../../Library/Application Support/mimocode/builtin_skills/0.1.15/skills/one/references/guide.md", rules.read), "allow");
+  assert.equal(evaluateOpenCodeRuleMap(path.posix.dirname(file), rules.external_directory), "allow");
+  assert.equal(evaluateOpenCodeRuleMap("../../Library/Application Support/mimocode/builtin_skills/0.1.15/skills/one/.env", rules.read), "deny");
+});

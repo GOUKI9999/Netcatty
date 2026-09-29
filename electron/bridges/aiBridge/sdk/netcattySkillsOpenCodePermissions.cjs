@@ -105,7 +105,7 @@ function getNativeSkillSuffixes({ mimo = false } = {}) {
     : OPENCODE_NATIVE_SKILL_DIR_SUFFIXES;
 }
 
-function getMimoNativeSkillDirectories({ mimo = false, env = {}, pathModule = path } = {}) {
+function getMimoNativeSkillDirectories({ mimo = false, env = {}, pathModule = path, platform = process.platform } = {}) {
   if (!mimo) return [];
   const absolute = (value) => typeof value === "string" && pathModule.isAbsolute(value) ? value : null;
   const mimoHome = absolute(env.MIMOCODE_HOME);
@@ -113,6 +113,9 @@ function getMimoNativeSkillDirectories({ mimo = false, env = {}, pathModule = pa
   const xdgConfig = absolute(env.XDG_CONFIG_HOME);
   const xdgData = absolute(env.XDG_DATA_HOME);
   const xdgCache = absolute(env.XDG_CACHE_HOME);
+  const macData = platform === "darwin" && absolute(env.HOME)
+    ? pathModule.join(env.HOME, "Library", "Application Support", "mimocode")
+    : null;
   return [
     ...(mimoHome ? [
       pathModule.join(mimoHome, "config", "skill"),
@@ -125,6 +128,7 @@ function getMimoNativeSkillDirectories({ mimo = false, env = {}, pathModule = pa
     ...(xdgConfig ? [pathModule.join(xdgConfig, "mimocode", "skill"), pathModule.join(xdgConfig, "mimocode", "skills")] : []),
     ...(xdgData ? [pathModule.join(xdgData, "mimocode", "builtin_skills"), pathModule.join(xdgData, "mimocode", "compose")] : []),
     ...(xdgCache ? [pathModule.join(xdgCache, "mimocode", "skills")] : []),
+    ...(macData ? [pathModule.join(macData, "builtin_skills"), pathModule.join(macData, "compose")] : []),
   ];
 }
 
