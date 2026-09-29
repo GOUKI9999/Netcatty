@@ -123,7 +123,7 @@ test("spawnMimoServer launches `mimo serve` with hostname/port argv and passes M
       config: { autoupdate: false },
       port: 5123,
       binPath: bin,
-      env: { MIMOCODE_BIN: bin, NETCATTY_TEST: "1", NODE_OPTIONS: "--require=/tmp/unsafe.js" },
+      env: { MIMOCODE_BIN: bin, NETCATTY_TEST: "1", NODE_OPTIONS: "--require=/tmp/unsafe.js", MIMOCODE_PERMISSION: '{"edit":"allow"}' },
     });
 
     assert.equal(calls.length, 1);
@@ -140,6 +140,7 @@ test("spawnMimoServer launches `mimo serve` with hostname/port argv and passes M
     assert.equal(options.env.MIMOCODE_BIN, bin);
     assert.equal(options.env.NETCATTY_TEST, "1");
     assert.equal(options.env.NODE_OPTIONS, undefined);
+    assert.equal(options.env.MIMOCODE_PERMISSION, undefined);
     assert.equal(options.env.MIMOCODE_SERVER_USERNAME, "netcatty");
     assert.ok(options.env.MIMOCODE_SERVER_PASSWORD.length >= 32);
 
@@ -514,6 +515,97 @@ test("runMimoTurn creates a session, streams deltas, and returns the session id"
   ]);
 });
 
+test("runMimoTurn allows configured custom skill paths before sending a prompt", async () => {
+  const { events, emitter } = collector();
+  const calls = [];
+  let firstClosed = false;
+  const stream = {
+    async *[Symbol.asyncIterator]() {
+      yield { payload: { type: "message.part.updated", properties: { part: { type: "text", sessionID: "sess-1", id: "p1", text: "ok" }, delta: "ok" } } };
+      yield { payload: { type: "session.idle", properties: { sessionID: "sess-1" } } };
+    },
+  };
+  const result = await runMimoTurn({
+    prompt: "hello",
+    cwd: "/work/project",
+    emitter,
+    abortController: new AbortController(),
+    mimoFactory: async ({ config }) => {
+      calls.push(config);
+      if (calls.length === 1) {
+        return {
+          client: { config: { get: async () => ({ data: { skills: { paths: ["/opt/team-skills"] } } }) } },
+          server: {
+            close() { firstClosed = true; },
+            getGlobalConfig: async () => ({ skills: { paths: ["/opt/team-skills"] } }),
+          },
+        };
+      }
+      assert.equal(firstClosed, true);
+      assert.equal(config.permission.read["/opt/team-skills/**"], "allow");
+      assert.equal(config.permission.read["../../opt/team-skills/**"], "allow");
+      return {
+        client: {
+          global: { event: async () => ({ stream: connectedStream(stream) }) },
+          session: { create: async () => ({ data: { id: "sess-1" } }), promptAsync: async () => ({ data: true }) },
+        },
+        server: { close() {} },
+      };
+    },
+  });
+  assert.deepEqual(result, { sessionId: "sess-1" });
+  assert.equal(calls.length, 2);
+  assert.equal(events.some((event) => event.k === "done"), true);
+});
+
+test("runMimoTurn does not grant a project-configured system directory", async () => {
+  const { events, emitter } = collector();
+  let calls = 0;
+  const stream = {
+    async *[Symbol.asyncIterator]() {
+      yield { payload: { type: "message.part.updated", properties: { part: { type: "text", sessionID: "sess-1", id: "p1", text: "ok" }, delta: "ok" } } };
+      yield { payload: { type: "session.idle", properties: { sessionID: "sess-1" } } };
+    },
+  };
+  await runMimoTurn({
+    prompt: "hello",
+    cwd: process.cwd(),
+    emitter,
+    abortController: new AbortController(),
+    mimoFactory: async ({ config }) => {
+      calls += 1;
+      assert.equal(config.permission.read["/etc/**"], undefined);
+      return {
+        client: {
+          config: { get: async () => ({ data: { skills: { paths: ["/etc"] } } }) },
+          global: { event: async () => ({ stream: connectedStream(stream) }) },
+          session: { create: async () => ({ data: { id: "sess-1" } }), promptAsync: async () => ({ data: true }) },
+        },
+        server: { close() {} },
+      };
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(events.some((event) => event.k === "done"), true);
+});
+
+test("runMimoTurn reports a resolved configuration error before starting the session", async () => {
+  const { events, emitter } = collector();
+  let closed = false;
+  const result = await runMimoTurn({
+    prompt: "hello",
+    emitter,
+    abortController: new AbortController(),
+    mimoFactory: async () => ({
+      client: { config: { get: async () => ({ error: { data: { message: "config unavailable" } } }) } },
+      server: { close() { closed = true; } },
+    }),
+  });
+  assert.deepEqual(result, { sessionId: null });
+  assert.equal(closed, true);
+  assert.equal(events.some((event) => event.k === "error" && event.m === "config unavailable"), true);
+});
+
 test("runMimoTurn waits for the event connection before sending a fast prompt", async () => {
   const { events, emitter } = collector();
   let connect;
@@ -580,6 +672,95 @@ test("runMimoTurn silently stops while creating the session", async () => {
   assert.equal(events.some((event) => event.k === "error"), false);
 });
 
+test("runMimoTurn reports a server exit while connecting the event stream", async () => {
+  const { events, emitter } = collector();
+  let reading;
+  const readStarted = new Promise((resolve) => { reading = resolve; });
+  let exitServer;
+  const exited = new Promise((resolve) => { exitServer = resolve; });
+  const stream = { async *[Symbol.asyncIterator]() { reading(); await new Promise(() => {}); } };
+  const client = {
+    global: { event: async () => ({ stream }) },
+    session: { create: async () => { throw new Error("session should not be created"); } },
+  };
+  const running = runMimoTurn({ prompt: "hello", emitter, abortController: new AbortController(), mimoFactory: async () => ({ client, server: { exited, close() {} } }) });
+  await readStarted;
+  exitServer();
+  assert.deepEqual(await running, { sessionId: null });
+  assert.equal(events.some((event) => event.k === "error" && /exited unexpectedly/.test(event.m)), true);
+});
+
+test("runMimoTurn reports a server exit while waiting for the reply", async () => {
+  const { events, emitter } = collector();
+  let exitServer;
+  const exited = new Promise((resolve) => { exitServer = resolve; });
+  let prompted;
+  const promptStarted = new Promise((resolve) => { prompted = resolve; });
+  const stream = {
+    async *[Symbol.asyncIterator]() {
+      yield { payload: { type: "server.connected" } };
+      await new Promise(() => {});
+    },
+  };
+  const client = {
+    global: { event: async () => ({ stream }) },
+    session: {
+      create: async () => ({ data: { id: "sess-1" } }),
+      promptAsync: async () => { prompted(); return { data: true }; },
+    },
+  };
+  const running = runMimoTurn({ prompt: "hello", emitter, abortController: new AbortController(), mimoFactory: async () => ({ client, server: { exited, close() {} } }) });
+  await promptStarted;
+  exitServer();
+  assert.deepEqual(await running, { sessionId: "sess-1" });
+  assert.equal(events.some((event) => event.k === "error" && /exited unexpectedly/.test(event.m)), true);
+  assert.equal(events.some((event) => event.k === "done"), false);
+});
+
+test("runMimoTurn stops when the session reports an error and the prompt call hangs", async () => {
+  const { events, emitter } = collector();
+  const stream = {
+    async *[Symbol.asyncIterator]() {
+      yield { payload: { type: "server.connected" } };
+      yield { payload: { type: "session.error", properties: { sessionID: "sess-1", error: { message: "model failed" } } } };
+    },
+  };
+  const client = {
+    global: { event: async () => ({ stream }) },
+    session: {
+      create: async () => ({ data: { id: "sess-1" } }),
+      promptAsync: async () => new Promise(() => {}),
+    },
+  };
+  const running = runMimoTurn({ prompt: "hello", emitter, abortController: new AbortController(), mimoFactory: async () => ({ client, server: { close() {} } }) });
+  const result = await Promise.race([running, new Promise((resolve) => setTimeout(() => resolve("timed-out"), 200))]);
+  assert.deepEqual(result, { sessionId: "sess-1" });
+  assert.equal(events.some((event) => event.k === "error" && event.m === "model failed"), true);
+  assert.equal(events.some((event) => event.k === "done"), false);
+});
+
+test("runMimoTurn reports a partial reply when the event stream ends without idle", async () => {
+  const { events, emitter } = collector();
+  const stream = {
+    async *[Symbol.asyncIterator]() {
+      yield { payload: { type: "server.connected" } };
+      yield { payload: { type: "message.part.updated", properties: { part: { type: "text", sessionID: "sess-1", id: "p1", text: "partial" }, delta: "partial" } } };
+    },
+  };
+  const client = {
+    global: { event: async () => ({ stream }) },
+    session: {
+      create: async () => ({ data: { id: "sess-1" } }),
+      promptAsync: async () => ({ data: true }),
+    },
+  };
+  const result = await runMimoTurn({ prompt: "hello", emitter, abortController: new AbortController(), mimoFactory: async () => ({ client, server: { close() {} } }) });
+  assert.deepEqual(result, { sessionId: "sess-1" });
+  assert.equal(events.some((event) => event.k === "text" && event.t === "partial"), true);
+  assert.equal(events.some((event) => event.k === "error" && /before it was complete/.test(event.m)), true);
+  assert.equal(events.some((event) => event.k === "done"), false);
+});
+
 test("runMimoTurn ignores events from other sessions on the shared global stream", async () => {
   const { events, emitter } = collector();
   const stream = {
@@ -615,6 +796,35 @@ test("runMimoTurn ignores events from other sessions on the shared global stream
     { k: "status", m: "MiMo Code session idle" },
     { k: "done" },
   ]);
+});
+
+test("runMimoTurn ignores a resumed session's stale idle before its new reply", async () => {
+  const { events, emitter } = collector();
+  const stream = {
+    async *[Symbol.asyncIterator]() {
+      yield { payload: { type: "server.connected" } };
+      yield { payload: { type: "session.idle", properties: { sessionID: "sess-1" } } };
+      yield { payload: { type: "session.status", properties: { sessionID: "sess-1", status: { type: "busy" } } } };
+      yield { payload: { type: "message.part.updated", properties: { part: { type: "text", sessionID: "sess-1", id: "new", text: "new reply" }, delta: "new reply" } } };
+      yield { payload: { type: "session.idle", properties: { sessionID: "sess-1" } } };
+    },
+  };
+  const client = {
+    global: { event: async () => ({ stream }) },
+    session: { promptAsync: async () => ({ data: true }) },
+  };
+  const result = await runMimoTurn({
+    prompt: "continue",
+    resumeSessionId: "sess-1",
+    emitter,
+    abortController: new AbortController(),
+    mimoFactory: async () => ({ client, server: { close() {} } }),
+  });
+  assert.deepEqual(result, { sessionId: "sess-1" });
+  assert.equal(events.some((event) => event.k === "text" && event.t === "new reply"), true);
+  assert.equal(events.filter((event) => event.k === "status" && event.m === "MiMo Code session idle").length, 1);
+  assert.equal(events.some((event) => event.k === "done"), true);
+  assert.equal(events.some((event) => event.k === "error"), false);
 });
 
 test("runMimoTurn returns promptly on abort and tears down the server without throwing", async () => {
@@ -884,5 +1094,24 @@ test("listMimoModels returns an empty catalog when pre-aborted or when the provi
     }),
   });
   assert.deepEqual(failed, { currentModelId: null, models: [] });
+  assert.equal(closeCount, 1);
+});
+
+test("listMimoModels stops when the service exits during provider discovery", async () => {
+  let exitServer;
+  const exited = new Promise((resolve) => { exitServer = resolve; });
+  let querying;
+  const queryStarted = new Promise((resolve) => { querying = resolve; });
+  let closeCount = 0;
+  const running = listMimoModels({
+    mimoFactory: async () => ({
+      client: { config: { providers: () => { querying(); return new Promise(() => {}); } } },
+      server: { exited, close() { closeCount += 1; } },
+    }),
+  });
+  await queryStarted;
+  exitServer();
+  const result = await Promise.race([running, new Promise((resolve) => setTimeout(() => resolve("timed-out"), 200))]);
+  assert.deepEqual(result, { currentModelId: null, models: [] });
   assert.equal(closeCount, 1);
 });

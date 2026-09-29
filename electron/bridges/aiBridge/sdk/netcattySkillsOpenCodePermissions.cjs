@@ -96,16 +96,53 @@ const MIMO_NATIVE_SKILL_DIR_SUFFIXES = [
   ".cache/mimocode/skills",
   ".local/share/mimocode/builtin_skills",
   ".local/share/mimocode/compose",
-  ".codex/skills",
 ];
 
-function getNativeSkillSuffixes({ mimo = false } = {}) {
-  return mimo
-    ? [...OPENCODE_NATIVE_SKILL_DIR_SUFFIXES, ...MIMO_NATIVE_SKILL_DIR_SUFFIXES]
-    : OPENCODE_NATIVE_SKILL_DIR_SUFFIXES;
+function getNativeSkillSuffixes({ mimo = false, env = {} } = {}) {
+  if (!mimo) return OPENCODE_NATIVE_SKILL_DIR_SUFFIXES;
+  const enabled = (key) => {
+    const value = env[key]?.toLowerCase();
+    return value === "true" || value === "1";
+  };
+  const suffixes = [...MIMO_NATIVE_SKILL_DIR_SUFFIXES];
+  if (!enabled("MIMOCODE_DISABLE_AGENTS_SKILLS")) suffixes.push(".agents/skills");
+  if (enabled("MIMOCODE_ENABLE_CLAUDE_CODE_SKILLS")) suffixes.push(".claude/skills");
+  if (enabled("MIMOCODE_ENABLE_CODEX_SKILLS")) suffixes.push(".codex/skills");
+  if (enabled("MIMOCODE_ENABLE_OPENCODE_SKILLS")) {
+    suffixes.push(...OPENCODE_NATIVE_SKILL_DIR_SUFFIXES.filter((suffix) => suffix.includes("opencode") && !suffix.includes(".cache/")));
+  }
+  return suffixes;
 }
 
-function getMimoNativeSkillDirectories({ mimo = false, env = {}, pathModule = path, platform = process.platform } = {}) {
+function resolveMimoConfiguredSkillPath(item, { cwd, env = {}, pathModule = path } = {}) {
+  if (typeof item !== "string" || !item.trim()) return null;
+  const home = [env.HOME, env.USERPROFILE].find((value) => typeof value === "string" && pathModule.isAbsolute(value));
+  const expanded = item.startsWith("~/") && home ? pathModule.join(home, item.slice(2)) : item;
+  if (expanded.startsWith("~/")) return null;
+  return pathModule.isAbsolute(expanded) ? pathModule.resolve(expanded) : pathModule.resolve(cwd || process.cwd(), expanded);
+}
+
+function filterMimoTrustedSkillPaths(skillPaths, { cwd, env = {}, globalSkillPaths = [], pathModule = path } = {}) {
+  if (!Array.isArray(skillPaths)) return [];
+  const resolve = (item) => resolveMimoConfiguredSkillPath(item, { cwd, env, pathModule });
+  const globalRoots = new Set((Array.isArray(globalSkillPaths) ? globalSkillPaths : []).map(resolve).filter(Boolean));
+  let realCwd;
+  try { realCwd = fs.realpathSync(cwd || process.cwd()); } catch {}
+  return skillPaths.filter((item) => {
+    const resolved = resolve(item);
+    if (!resolved) return false;
+    if (globalRoots.has(resolved)) return true;
+    if (!realCwd) return false;
+    try {
+      const relative = pathModule.relative(realCwd, fs.realpathSync(resolved));
+      return relative === "" || (relative !== ".." && !relative.startsWith(`..${pathModule.sep}`) && !pathModule.isAbsolute(relative));
+    } catch {
+      return false;
+    }
+  });
+}
+
+function getMimoNativeSkillDirectories({ mimo = false, env = {}, pathModule = path, platform = process.platform, cwd, skillPaths = [] } = {}) {
   if (!mimo) return [];
   const absolute = (value) => typeof value === "string" && pathModule.isAbsolute(value) ? value : null;
   const mimoHome = absolute(env.MIMOCODE_HOME);
@@ -116,6 +153,12 @@ function getMimoNativeSkillDirectories({ mimo = false, env = {}, pathModule = pa
   const macData = platform === "darwin" && absolute(env.HOME)
     ? pathModule.join(env.HOME, "Library", "Application Support", "mimocode")
     : null;
+  const winData = platform === "win32" && absolute(env.LOCALAPPDATA)
+    ? pathModule.join(env.LOCALAPPDATA, "mimocode")
+    : null;
+  const custom = (Array.isArray(skillPaths) ? skillPaths : [])
+    .map((item) => resolveMimoConfiguredSkillPath(item, { cwd, env, pathModule }))
+    .filter(Boolean);
   return [
     ...(mimoHome ? [
       pathModule.join(mimoHome, "config", "skill"),
@@ -129,6 +172,8 @@ function getMimoNativeSkillDirectories({ mimo = false, env = {}, pathModule = pa
     ...(xdgData ? [pathModule.join(xdgData, "mimocode", "builtin_skills"), pathModule.join(xdgData, "mimocode", "compose")] : []),
     ...(xdgCache ? [pathModule.join(xdgCache, "mimocode", "skills")] : []),
     ...(macData ? [pathModule.join(macData, "builtin_skills"), pathModule.join(macData, "compose")] : []),
+    ...(winData ? [pathModule.join(winData, "builtin_skills"), pathModule.join(winData, "compose")] : []),
+    ...custom,
   ];
 }
 
@@ -249,6 +294,7 @@ module.exports = {
   buildOpenCodeNativeSkillPermissionPatterns,
   buildOpenCodeNativeSkillsPermissionRules,
   buildOpenCodeSkillsPermissionRules,
+  filterMimoTrustedSkillPaths,
   toOpenCodeDirectoryPermissionPatterns,
   toOpenCodeDirectoryGlob,
   toOpenCodeFileParentPermissionPatterns,

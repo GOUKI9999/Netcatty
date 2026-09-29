@@ -24,6 +24,7 @@ const { randomBytes } = require("node:crypto");
 const { spawn, spawnSync } = require("node:child_process");
 const { prepareCommandForSpawn, resolveCliFromPath } = require("../../ai/shellUtils.cjs");
 const { buildSdkAgentEnv } = require("./env.cjs");
+const { filterMimoTrustedSkillPaths } = require("./netcattySkillsOpenCodePermissions.cjs");
 const {
   buildOpenCodeConfig,
   buildOpenCodePromptParts,
@@ -186,6 +187,9 @@ async function spawnMimoServer({
     MIMOCODE_SERVER_USERNAME: serverUsername,
     MIMOCODE_SERVER_PASSWORD: serverPassword,
   };
+  // MiMo merges this env override after the config we supply. Never let an
+  // inherited permission policy undo Netcatty's observer/confirm restrictions.
+  delete childEnv.MIMOCODE_PERMISSION;
 
   const spawnSpec = prepareCommandForSpawn(command, args, { unwrapNativeExe: false });
   const child = spawn(spawnSpec.command, spawnSpec.args, {
@@ -262,15 +266,31 @@ async function spawnMimoServer({
     throw error;
   });
 
+  const exited = new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve();
+      return;
+    }
+    child.once("exit", resolve);
+    child.once("error", resolve);
+  });
+  const authorization = `Basic ${Buffer.from(`${serverUsername}:${serverPassword}`).toString("base64")}`;
   return {
     url,
     client: sdk.createOpencodeClient({
       baseUrl: url,
       headers: {
-        Authorization: `Basic ${Buffer.from(`${serverUsername}:${serverPassword}`).toString("base64")}`,
+        Authorization: authorization,
       },
     }),
-    server: { url, close },
+    server: {
+      url, close, exited,
+      async getGlobalConfig(signal) {
+        const response = await fetch(`${url}/global/config`, { headers: { Authorization: authorization }, signal });
+        if (!response.ok) throw new Error(`MiMo Code global configuration unavailable (${response.status})`);
+        return response.json();
+      },
+    },
   };
 }
 
@@ -289,13 +309,36 @@ function createAbortWait(signal) {
   };
 }
 
-async function awaitMimoSetup(promise, signal) {
+function createMimoExitWait(server) {
+  return server?.exited
+    ? server.exited.then(() => ({ type: "exit" }))
+    : new Promise(() => {});
+}
+
+async function awaitMimoSetup(promise, signal, server, timeoutMs = 10_000) {
   const abortWait = createAbortWait(signal);
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("MiMo Code service did not respond in time")), timeoutMs);
+    timer.unref?.();
+  });
   try {
-    return await Promise.race([promise, abortWait.promise.then(() => null)]);
+    const result = await Promise.race([
+      promise.then((value) => ({ type: "value", value })),
+      abortWait.promise.then(() => ({ type: "abort" })),
+      createMimoExitWait(server),
+      timeout,
+    ]);
+    if (result.type === "exit") throw new Error("MiMo Code service exited unexpectedly");
+    return result.type === "abort" ? null : result.value;
   } finally {
+    clearTimeout(timer);
     abortWait.dispose();
   }
+}
+
+function closeMimoEventIterator(iterator) {
+  try { void Promise.resolve(iterator?.return?.()).catch(() => {}); } catch {}
 }
 
 function createStopWait() {
@@ -349,14 +392,18 @@ async function runMimoTurn({
   skillsPathAllowlist, resumeSessionId, env, binPath, emitter, abortController, mimoFactory,
 }) {
   const emit = createMiMoEmitter(emitter);
+  const nativeSkillOptions = { mimo: true, env: { ...process.env, ...env }, cwd };
   const config = buildOpenCodeConfig({
     model, injectedMcpServers, toolIntegrationMode, skillsPathAllowlist,
-    nativeSkillOptions: { mimo: true, env: { ...process.env, ...env }, cwd },
+    nativeSkillOptions,
   });
   let instance = null;
+  let iterator = null;
   let sessionId = resumeSessionId || null;
   let hasContent = false;
   let failed = false;
+  let completed = false;
+  let turnStarted = false;
   let abortSent = false;
   let removeAbortListener = null;
   const state = { reasoningOpen: false };
@@ -370,6 +417,50 @@ async function runMimoTurn({
       port,
       signal: abortController?.signal,
     });
+    // MiMo can discover additional roots from its resolved `skills.paths`.
+    // Read that resolved config before the turn, then restart only when it
+    // names custom roots so our permission map can include those exact paths.
+    if (typeof instance.client?.config?.get === "function") {
+      const resolved = await awaitMimoSetup(
+        instance.client.config.get({ query: directoryQuery }),
+        abortController?.signal,
+        instance.server,
+      );
+      if (abortController?.signal?.aborted) return { sessionId };
+      if (resolved?.error) throw resolved.error;
+      if (!resolved) throw new Error("MiMo Code configuration unavailable");
+      const skillPaths = resolved?.data?.skills?.paths || resolved?.skills?.paths;
+      if (Array.isArray(skillPaths) && skillPaths.length > 0) {
+        let trustedPaths = filterMimoTrustedSkillPaths(skillPaths, { cwd, env: nativeSkillOptions.env });
+        if (trustedPaths.length < skillPaths.length && typeof instance.server?.getGlobalConfig === "function") {
+          let globalConfig;
+          try {
+            globalConfig = await awaitMimoSetup(
+              instance.server.getGlobalConfig(abortController?.signal),
+              abortController?.signal,
+              instance.server,
+            );
+          } catch {}
+          if (abortController?.signal?.aborted) return { sessionId };
+          trustedPaths = filterMimoTrustedSkillPaths(skillPaths, {
+            cwd, env: nativeSkillOptions.env,
+            globalSkillPaths: globalConfig?.skills?.paths,
+          });
+        }
+        if (trustedPaths.length > 0) {
+          const customConfig = buildOpenCodeConfig({
+            model, injectedMcpServers, toolIntegrationMode, skillsPathAllowlist,
+            nativeSkillOptions: { ...nativeSkillOptions, skillPaths: trustedPaths },
+          });
+          instance.server?.close?.();
+          instance = await factory({
+            config: customConfig,
+            port: await getAvailablePort(),
+            signal: abortController?.signal,
+          });
+        }
+      }
+    }
     const { client } = instance;
     const abortMimo = async () => {
       if (abortSent) return;
@@ -388,16 +479,15 @@ async function runMimoTurn({
       await abortMimo();
       return { sessionId };
     }
-    const events = await awaitMimoSetup(client.global.event({ signal: abortController?.signal }), abortController?.signal);
+    const events = await awaitMimoSetup(client.global.event({ signal: abortController?.signal }), abortController?.signal, instance.server);
     if (abortController?.signal?.aborted) return { sessionId };
-    const iterator = events?.stream?.[Symbol.asyncIterator]?.();
+    iterator = events?.stream?.[Symbol.asyncIterator]?.();
     if (!iterator) throw new Error("MiMo Code did not provide an event stream");
     // The SDK stream is lazy: its first read opens the SSE connection. Wait
     // for that first event before sending a prompt, or a fast reply can be
     // missed entirely. Keep the event to process after session creation.
-    const firstEvent = await awaitMimoSetup(iterator.next(), abortController?.signal);
+    const firstEvent = await awaitMimoSetup(iterator.next(), abortController?.signal, instance.server);
     if (abortController?.signal?.aborted) {
-      try { void iterator.return?.(); } catch {}
       return { sessionId };
     }
     if (!firstEvent || firstEvent.done) throw new Error("MiMo Code event stream closed before the session started");
@@ -406,9 +496,8 @@ async function runMimoTurn({
       const created = await awaitMimoSetup(client.session.create({
         body: { title: "Netcatty MiMo Code" },
         query: directoryQuery,
-      }), abortController?.signal);
+      }), abortController?.signal, instance.server);
       if (abortController?.signal?.aborted) {
-        try { void iterator.return?.(); } catch {}
         return { sessionId };
       }
       sessionId = created?.data?.id || created?.id || null;
@@ -418,6 +507,7 @@ async function runMimoTurn({
     emit.sessionId(sessionId);
 
     const stopEventLoopWait = createStopWait();
+    const serverExitWait = createMimoExitWait(instance.server);
     const eventLoop = (async () => {
       const abortWait = createAbortWait(abortController?.signal);
       try {
@@ -430,9 +520,11 @@ async function runMimoTurn({
             ),
             abortWait.promise.then(() => ({ type: "abort" })),
             stopEventLoopWait.promise.then(() => ({ type: "stop" })),
+            serverExitWait,
           ]);
           if (raced.type === "abort") break;
           if (raced.type === "stop") break;
+          if (raced.type === "exit") throw new Error("MiMo Code service exited unexpectedly");
           if (raced.type === "error") throw raced.error;
           const { value: event, done } = raced.value;
           if (done) break;
@@ -445,22 +537,40 @@ async function runMimoTurn({
             nextEvent = iterator.next();
             continue;
           }
+          const payload = event?.payload || event;
+          // A resumed session can announce the previous turn's idle state
+          // before this prompt produces any event. Wait for this turn's busy
+          // state or content before accepting an idle as completion.
+          if (payload?.type === "session.idle" && !turnStarted) {
+            nextEvent = iterator.next();
+            continue;
+          }
+          if (payload?.type === "session.status" && payload.properties?.status?.type === "busy") {
+            turnStarted = true;
+          }
           const result = translateOpenCodeEvent(event, emit, state);
-          if (result.content) hasContent = true;
+          if (result.content) {
+            hasContent = true;
+            turnStarted = true;
+          }
           if (result.error) {
             failed = true;
             break;
           }
-          if (result.idle) break;
+          if (result.idle) {
+            completed = true;
+            break;
+          }
           nextEvent = iterator.next();
         }
       } finally {
         abortWait.dispose();
-        if (abortController?.signal?.aborted || stopEventLoopWait.stopped) {
-          try { void iterator.return?.(); } catch {}
-        }
       }
     })();
+    const eventLoopOutcome = eventLoop.then(
+      () => ({ type: "stream-end" }),
+      (error) => ({ type: "error", error }),
+    );
 
     const body = {
       parts: buildOpenCodePromptParts(prompt, attachments),
@@ -485,8 +595,16 @@ async function runMimoTurn({
         (error) => ({ type: "error", error }),
       ),
       promptAbortWait.promise.then(() => ({ type: "abort" })),
+      serverExitWait,
+      eventLoopOutcome,
     ]);
     promptAbortWait.dispose();
+    if (promptResult.type === "exit") {
+      failed = true;
+      stopEventLoopWait.stop();
+      await eventLoop.catch(() => {});
+      throw new Error("MiMo Code service exited unexpectedly");
+    }
     if (promptResult.type === "error") {
       failed = true;
       await abortMimo();
@@ -505,11 +623,15 @@ async function runMimoTurn({
       await abortMimo();
     }
 
+    if (!completed && !failed && !abortController?.signal?.aborted && hasContent) {
+      emit.emitError("MiMo Code reply ended before it was complete.");
+      return { sessionId };
+    }
     if (!hasContent && !failed && !abortController?.signal?.aborted) {
       emit.emitError("MiMo Code returned an empty response. Run `mimo` in a terminal to configure authentication and models.");
       return { sessionId };
     }
-    if (!failed && !abortController?.signal?.aborted) emit.emitDone();
+    if (!failed && completed && !abortController?.signal?.aborted) emit.emitDone();
     return { sessionId };
   } catch (error) {
     if (abortController?.signal?.aborted) return { sessionId };
@@ -522,26 +644,13 @@ async function runMimoTurn({
     return { sessionId };
   } finally {
     removeAbortListener?.();
+    closeMimoEventIterator(iterator);
     try { instance?.server?.close?.(); } catch {}
   }
 }
 
 function emptyMimoModelCatalog() {
   return { currentModelId: null, models: [] };
-}
-
-function abortError(signal) {
-  return signal?.reason instanceof Error
-    ? signal.reason
-    : new Error(String(signal?.reason || "aborted"));
-}
-
-function whenAborted(signal) {
-  if (!signal) return new Promise(() => {});
-  if (signal.aborted) return Promise.reject(abortError(signal));
-  return new Promise((_, reject) => {
-    signal.addEventListener("abort", () => reject(abortError(signal)), { once: true });
-  });
 }
 
 /**
@@ -562,10 +671,8 @@ async function listMimoModels({ env, binPath, cwd, mimoFactory, abortController,
       port,
       signal: effectiveSignal,
     });
-    const response = await Promise.race([
-      instance.client.config.providers(),
-      whenAborted(effectiveSignal),
-    ]);
+    const response = await awaitMimoSetup(instance.client.config.providers(), effectiveSignal, instance.server);
+    if (effectiveSignal?.aborted) return emptyMimoModelCatalog();
     if (response?.error) {
       throw new Error(extractMimoErrorMessage(response.error) || "MiMo Code providers unavailable");
     }

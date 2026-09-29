@@ -107,6 +107,7 @@ test("MiMo model catalog cache changes with its config roots", () => {
   assert.notEqual(base, buildSdkModelCacheKey("mimo", "/usr/bin/mimo", { MIMOCODE_HOME: "/one", MIMOCODE_CONFIG_DIR: "/extra" }));
   assert.notEqual(base, buildSdkModelCacheKey("mimo", "/usr/bin/mimo", { MIMOCODE_HOME: "/one", MIMOCODE_BIN: "/another/mimo" }));
   assert.notEqual(base, buildSdkModelCacheKey("mimo", "/usr/bin/mimo", { MIMOCODE_HOME: "/one", MIMOCODE_BIN_PATH: "/another/mimo" }));
+  assert.notEqual(base, buildSdkModelCacheKey("mimo", "/usr/bin/mimo", { MIMOCODE_HOME: "/one", MIMOCODE_CONFIG: "/another/config.json" }));
 });
 
 test("Cursor session keys isolate CLI login from API key auth modes", () => {

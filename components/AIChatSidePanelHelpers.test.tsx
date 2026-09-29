@@ -185,6 +185,10 @@ test('MiMo model cache reloads after its config directory changes', async () => 
   assert.deepEqual(await cache.refresh(firstKey, load), { currentModelId: '1', models: [] });
   assert.deepEqual(await cache.refresh(secondKey, load), { currentModelId: '2', models: [] });
   assert.equal(loads, 2);
+  assert.notEqual(
+    buildSdkRuntimeModelCacheKey({ ...agent, env: { MIMOCODE_CONFIG: '/profiles/a/mimocode.json' } }),
+    buildSdkRuntimeModelCacheKey({ ...agent, env: { MIMOCODE_CONFIG: '/profiles/b/mimocode.json' } }),
+  );
 });
 
 test('Claude model cache keys isolate credentials without exposing them', () => {

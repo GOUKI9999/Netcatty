@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 
 const {
@@ -8,6 +10,7 @@ const {
   buildOpenCodeNativeSkillPermissionPatterns,
   buildOpenCodeNativeSkillsPermissionRules,
   buildOpenCodeSkillsPermissionRules,
+  filterMimoTrustedSkillPaths,
   toOpenCodeDirectoryPermissionPatterns,
   toOpenCodeDirectoryGlob,
   toOpenCodeFileParentPermissionPatterns,
@@ -261,4 +264,85 @@ test("MiMo native skills can read macOS built-in skill references", () => {
   assert.equal(evaluateOpenCodeRuleMap("../../Library/Application Support/mimocode/builtin_skills/0.1.15/skills/one/references/guide.md", rules.read), "allow");
   assert.equal(evaluateOpenCodeRuleMap(path.posix.dirname(file), rules.external_directory), "allow");
   assert.equal(evaluateOpenCodeRuleMap("../../Library/Application Support/mimocode/builtin_skills/0.1.15/skills/one/.env", rules.read), "deny");
+});
+
+test("MiMo native skills can read Windows built-in skill references", () => {
+  const rules = buildOpenCodeNativeSkillsPermissionRules({
+    mimo: true,
+    platform: "win32",
+    pathModule: path.win32,
+    cwd: "C:\\Users\\me\\work\\project",
+    env: { LOCALAPPDATA: "C:\\Users\\me\\AppData\\Local" },
+  });
+  const file = "C:/Users/me/AppData/Local/mimocode/builtin_skills/0.1.15/skills/one/references/guide.md";
+  assert.equal(evaluateOpenCodeRuleMap(file, rules.read), "allow");
+  assert.equal(evaluateOpenCodeRuleMap(path.posix.dirname(file), rules.external_directory), "allow");
+  assert.equal(evaluateOpenCodeRuleMap("../../AppData/Local/mimocode/builtin_skills/0.1.15/skills/one/references/guide.md", rules.read), "allow");
+});
+
+test("MiMo native skill access follows enabled external roots", () => {
+  const regular = buildOpenCodeNativeSkillsPermissionRules({ mimo: true });
+  for (const file of ["/home/me/.claude/skills/one/SKILL.md", "/home/me/.codex/skills/one/SKILL.md", "/home/me/.opencode/skills/one/SKILL.md"]) {
+    assert.equal(evaluateOpenCodeRuleMap(file, regular.read), undefined, file);
+    assert.equal(evaluateOpenCodeRuleMap(path.posix.dirname(file), regular.external_directory), "deny", file);
+  }
+  assert.equal(evaluateOpenCodeRuleMap("/home/me/.agents/skills/one/SKILL.md", regular.read), "allow");
+  const disabledAgents = buildOpenCodeNativeSkillsPermissionRules({ mimo: true, env: { MIMOCODE_DISABLE_AGENTS_SKILLS: "true" } });
+  assert.equal(evaluateOpenCodeRuleMap("/home/me/.agents/skills/one/SKILL.md", disabledAgents.read), undefined);
+  const enabled = buildOpenCodeNativeSkillsPermissionRules({ mimo: true, env: {
+    MIMOCODE_ENABLE_CLAUDE_CODE_SKILLS: "true",
+    MIMOCODE_ENABLE_CODEX_SKILLS: "true",
+    MIMOCODE_ENABLE_OPENCODE_SKILLS: "true",
+  } });
+  assert.equal(evaluateOpenCodeRuleMap("/home/me/.claude/skills/one/SKILL.md", enabled.read), "allow");
+  assert.equal(evaluateOpenCodeRuleMap("/home/me/.codex/skills/one/SKILL.md", enabled.read), "allow");
+  assert.equal(evaluateOpenCodeRuleMap("/home/me/.opencode/skills/one/SKILL.md", enabled.read), "allow");
+  const numeric = buildOpenCodeNativeSkillsPermissionRules({ mimo: true, env: {
+    MIMOCODE_ENABLE_CODEX_SKILLS: "1",
+    MIMOCODE_DISABLE_AGENTS_SKILLS: "1",
+  } });
+  assert.equal(evaluateOpenCodeRuleMap("/home/me/.codex/skills/one/SKILL.md", numeric.read), "allow");
+  assert.equal(evaluateOpenCodeRuleMap("/home/me/.agents/skills/one/SKILL.md", numeric.read), undefined);
+});
+
+test("MiMo native skill rules allow configured custom skill paths", () => {
+  const rules = buildOpenCodeNativeSkillsPermissionRules({
+    mimo: true,
+    cwd: "/work/project",
+    env: { HOME: "/home/me" },
+    skillPaths: ["/opt/team-skills", "./project-skills", "~/personal-skills"],
+  });
+  for (const file of [
+    "/opt/team-skills/one/references/checklist.md",
+    "/work/project/project-skills/one/references/checklist.md",
+    "/home/me/personal-skills/one/references/checklist.md",
+  ]) {
+    assert.equal(evaluateOpenCodeRuleMap(file, rules.read), "allow", file);
+    assert.equal(evaluateOpenCodeRuleMap(path.posix.dirname(file), rules.external_directory), "allow", file);
+    assert.equal(evaluateOpenCodeRuleMap(path.posix.dirname(file) + "/.env", rules.read), "deny", file);
+  }
+  assert.equal(evaluateOpenCodeRuleMap("../../opt/team-skills/one/references/checklist.md", rules.read), "allow");
+  assert.equal(evaluateOpenCodeRuleMap("/opt/unrelated/checklist.md", rules.read), undefined);
+});
+
+test("MiMo custom skill paths trust the project or the user's global config", () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-mimo-skills-project-"));
+  const external = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-mimo-skills-external-"));
+  const local = path.join(project, "skills");
+  const linked = path.join(project, "linked");
+  fs.mkdirSync(local);
+  fs.symlinkSync(external, linked);
+  try {
+    assert.deepEqual(
+      filterMimoTrustedSkillPaths([local, external, linked, "/etc"], { cwd: project }),
+      [local],
+    );
+    assert.deepEqual(
+      filterMimoTrustedSkillPaths([local, external, linked], { cwd: project, globalSkillPaths: [external] }),
+      [local, external],
+    );
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true });
+    fs.rmSync(external, { recursive: true, force: true });
+  }
 });
