@@ -223,6 +223,7 @@ test("MiMo native skills can read references from default and overridden roots w
     mimo: true,
     cwd: "/work/project",
     env: {
+      HOME: "/home/me",
       MIMOCODE_HOME: "/opt/mimo-home",
       MIMOCODE_CONFIG_DIR: "/opt/mimo-extra",
       XDG_CONFIG_HOME: "/opt/xdg-config",
@@ -248,6 +249,7 @@ test("MiMo native skills can read references from default and overridden roots w
   assert.equal(evaluateOpenCodeRuleMap("../../opt/mimo-home/config/skill/one/.env", rules.read), "deny");
   assert.equal(evaluateOpenCodeRuleMap("/home/me/.mimocode/skills/one/.env.local", rules.read), "deny");
   assert.equal(evaluateOpenCodeRuleMap("/opt/unrelated/secret.md", rules.read), undefined);
+  assert.equal(evaluateOpenCodeRuleMap("/opt/other/.mimocode/skills/private/secret.txt", rules.read), undefined);
   assert.equal(evaluateOpenCodeRuleMap("/opt/unrelated", rules.external_directory), "deny");
   assert.equal(evaluateOpenCodeRuleMap("/home/me/.mimocode/skills/one/references/guide.md", buildOpenCodeNativeSkillsPermissionRules().read), undefined);
 });
@@ -281,15 +283,16 @@ test("MiMo native skills can read Windows built-in skill references", () => {
 });
 
 test("MiMo native skill access follows enabled external roots", () => {
-  const regular = buildOpenCodeNativeSkillsPermissionRules({ mimo: true });
+  const regular = buildOpenCodeNativeSkillsPermissionRules({ mimo: true, cwd: "/work/project", env: { HOME: "/home/me" } });
   for (const file of ["/home/me/.claude/skills/one/SKILL.md", "/home/me/.codex/skills/one/SKILL.md", "/home/me/.opencode/skills/one/SKILL.md"]) {
     assert.equal(evaluateOpenCodeRuleMap(file, regular.read), undefined, file);
     assert.equal(evaluateOpenCodeRuleMap(path.posix.dirname(file), regular.external_directory), "deny", file);
   }
   assert.equal(evaluateOpenCodeRuleMap("/home/me/.agents/skills/one/SKILL.md", regular.read), "allow");
-  const disabledAgents = buildOpenCodeNativeSkillsPermissionRules({ mimo: true, env: { MIMOCODE_DISABLE_AGENTS_SKILLS: "true" } });
+  const disabledAgents = buildOpenCodeNativeSkillsPermissionRules({ mimo: true, cwd: "/work/project", env: { HOME: "/home/me", MIMOCODE_DISABLE_AGENTS_SKILLS: "true" } });
   assert.equal(evaluateOpenCodeRuleMap("/home/me/.agents/skills/one/SKILL.md", disabledAgents.read), undefined);
-  const enabled = buildOpenCodeNativeSkillsPermissionRules({ mimo: true, env: {
+  const enabled = buildOpenCodeNativeSkillsPermissionRules({ mimo: true, cwd: "/work/project", env: {
+    HOME: "/home/me",
     MIMOCODE_ENABLE_CLAUDE_CODE_SKILLS: "true",
     MIMOCODE_ENABLE_CODEX_SKILLS: "true",
     MIMOCODE_ENABLE_OPENCODE_SKILLS: "true",
@@ -297,7 +300,8 @@ test("MiMo native skill access follows enabled external roots", () => {
   assert.equal(evaluateOpenCodeRuleMap("/home/me/.claude/skills/one/SKILL.md", enabled.read), "allow");
   assert.equal(evaluateOpenCodeRuleMap("/home/me/.codex/skills/one/SKILL.md", enabled.read), "allow");
   assert.equal(evaluateOpenCodeRuleMap("/home/me/.opencode/skills/one/SKILL.md", enabled.read), "allow");
-  const numeric = buildOpenCodeNativeSkillsPermissionRules({ mimo: true, env: {
+  const numeric = buildOpenCodeNativeSkillsPermissionRules({ mimo: true, cwd: "/work/project", env: {
+    HOME: "/home/me",
     MIMOCODE_ENABLE_CODEX_SKILLS: "1",
     MIMOCODE_DISABLE_AGENTS_SKILLS: "1",
   } });
@@ -335,12 +339,30 @@ test("MiMo custom skill paths trust the project or the user's global config", ()
   try {
     assert.deepEqual(
       filterMimoTrustedSkillPaths([local, external, linked, "/etc"], { cwd: project }),
-      [local],
+      [fs.realpathSync(local)],
     );
     assert.deepEqual(
       filterMimoTrustedSkillPaths([local, external, linked], { cwd: project, globalSkillPaths: [external] }),
-      [local, external],
+      [fs.realpathSync(local), fs.realpathSync(external)],
     );
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true });
+    fs.rmSync(external, { recursive: true, force: true });
+  }
+});
+
+test("MiMo skill paths use the checked target if a project link changes later", () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-mimo-linked-project-"));
+  const external = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-mimo-linked-external-"));
+  const local = path.join(project, "skills");
+  const linked = path.join(project, "linked-skills");
+  fs.mkdirSync(local);
+  fs.symlinkSync(local, linked);
+  try {
+    const checked = filterMimoTrustedSkillPaths([linked], { cwd: project });
+    fs.rmSync(linked);
+    fs.symlinkSync(external, linked);
+    assert.deepEqual(checked, [fs.realpathSync(local)]);
   } finally {
     fs.rmSync(project, { recursive: true, force: true });
     fs.rmSync(external, { recursive: true, force: true });

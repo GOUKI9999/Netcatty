@@ -515,9 +515,11 @@ test("runMimoTurn creates a session, streams deltas, and returns the session id"
   ]);
 });
 
-test("runMimoTurn allows configured custom skill paths before sending a prompt", async () => {
+test("runMimoTurn allows configured custom skill paths before sending a prompt", async (t) => {
   const { events, emitter } = collector();
   const calls = [];
+  const customPath = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-mimo-turn-skills-")));
+  t.after(() => fs.rmSync(customPath, { recursive: true, force: true }));
   const stream = {
     async *[Symbol.asyncIterator]() {
       yield { payload: { type: "message.part.updated", properties: { part: { type: "text", sessionID: "sess-1", id: "p1", text: "ok" }, delta: "ok" } } };
@@ -529,12 +531,12 @@ test("runMimoTurn allows configured custom skill paths before sending a prompt",
     cwd: "/work/project",
     emitter,
     abortController: new AbortController(),
-    mimoConfigReader: async () => ({ project: ["/opt/team-skills"], global: ["/opt/team-skills"] }),
+    mimoConfigReader: async () => ({ project: [customPath], global: [customPath] }),
     mimoFactory: async ({ config }) => {
       calls.push(config);
-      assert.equal(config.permission.read["/opt/team-skills/**"], "allow");
-      assert.equal(config.permission.read["../../opt/team-skills/**"], "allow");
-      assert.deepEqual(config.skills.paths, ["/opt/team-skills"]);
+      assert.equal(config.permission.read[`${customPath}/**`], "allow");
+      assert.equal(config.permission.read[`${path.relative("/work/project", customPath)}/**`], "allow");
+      assert.deepEqual(config.skills.paths, [customPath]);
       return {
         client: {
           global: { event: async () => ({ stream: connectedStream(stream) }) },

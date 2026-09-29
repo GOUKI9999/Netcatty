@@ -128,16 +128,19 @@ function filterMimoTrustedSkillPaths(skillPaths, { cwd, env = {}, globalSkillPat
   const globalRoots = new Set((Array.isArray(globalSkillPaths) ? globalSkillPaths : []).map(resolve).filter(Boolean));
   let realCwd;
   try { realCwd = fs.realpathSync(cwd || process.cwd()); } catch {}
-  return skillPaths.filter((item) => {
+  return skillPaths.flatMap((item) => {
     const resolved = resolve(item);
-    if (!resolved) return false;
-    if (globalRoots.has(resolved)) return true;
-    if (!realCwd) return false;
+    if (!resolved) return [];
     try {
-      const relative = pathModule.relative(realCwd, fs.realpathSync(resolved));
-      return relative === "" || (relative !== ".." && !relative.startsWith(`..${pathModule.sep}`) && !pathModule.isAbsolute(relative));
+      const canonical = fs.realpathSync(resolved);
+      if (globalRoots.has(resolved)) return [canonical];
+      if (!realCwd) return [];
+      const relative = pathModule.relative(realCwd, canonical);
+      return relative === "" || (relative !== ".." && !relative.startsWith(`..${pathModule.sep}`) && !pathModule.isAbsolute(relative))
+        ? [canonical]
+        : [];
     } catch {
-      return false;
+      return [];
     }
   });
 }
@@ -159,7 +162,13 @@ function getMimoNativeSkillDirectories({ mimo = false, env = {}, pathModule = pa
   const custom = (Array.isArray(skillPaths) ? skillPaths : [])
     .map((item) => resolveMimoConfiguredSkillPath(item, { cwd, env, pathModule }))
     .filter(Boolean);
+  const home = absolute(env.HOME) || absolute(env.USERPROFILE);
+  const nativeSuffixes = getNativeSkillSuffixes({ mimo: true, env });
+  const scopedDirs = [cwd, home]
+    .filter((base) => typeof base === "string" && pathModule.isAbsolute(base))
+    .flatMap((base) => nativeSuffixes.map((suffix) => pathModule.join(base, suffix)));
   return [
+    ...scopedDirs,
     ...(mimoHome ? [
       pathModule.join(mimoHome, "config", "skill"),
       pathModule.join(mimoHome, "config", "skills"),
@@ -189,10 +198,10 @@ function getMimoRelativeSkillDirectory(dir, options = {}) {
 // OpenCode's `read` permission checks match worktree-relative paths (e.g.
 // "../../.opencode/skills/foo/references/doc.md") while `external_directory`
 // checks match absolute directory globs ("C:/Users/me/.opencode/skills/foo/*").
-// Anchoring each well-known suffix behind a leading wildcard covers both
-// forms on every platform (OpenCode normalizes "\\" to "/" before matching).
+// OpenCode's suffix rules predate MiMo. MiMo uses concrete project and user
+// roots below, so an unrelated folder named .mimocode/skills is not trusted.
 function buildOpenCodeNativeSkillPermissionPatterns(options = {}) {
-  return getNativeSkillSuffixes(options).flatMap((suffix) => [
+  return (options.mimo ? [] : getNativeSkillSuffixes(options)).flatMap((suffix) => [
     `*${suffix}`,
     `*${suffix}/*`,
     `*${suffix}/**`,
@@ -204,7 +213,7 @@ function buildOpenCodeNativeSkillPermissionPatterns(options = {}) {
 // (last matching rule wins), so re-deny dot-env files inside skill dirs
 // after the allow entries to keep secret-file protection intact.
 function buildOpenCodeNativeSkillEnvDenyPatterns(options = {}) {
-  const suffixRules = getNativeSkillSuffixes(options).flatMap((suffix) => [
+  const suffixRules = (options.mimo ? [] : getNativeSkillSuffixes(options)).flatMap((suffix) => [
     `*${suffix}/**.env`,
     `*${suffix}/**.env.*`,
   ]);
