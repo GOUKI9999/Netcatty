@@ -268,6 +268,28 @@ test("MiMo native skills can read macOS built-in skill references", () => {
   assert.equal(evaluateOpenCodeRuleMap("../../Library/Application Support/mimocode/builtin_skills/0.1.15/skills/one/.env", rules.read), "deny");
 });
 
+test("MiMo native skill reads include ancestor projects but exclude unrelated projects", () => {
+  const rules = buildOpenCodeNativeSkillsPermissionRules({
+    mimo: true,
+    cwd: "/work/project/subdir",
+    env: { HOME: "/home/me" },
+  });
+  assert.equal(evaluateOpenCodeRuleMap("/work/project/.mimocode/skills/one/reference.md", rules.read), "allow");
+  assert.equal(evaluateOpenCodeRuleMap("/work/project/.agents/skills/one/reference.md", rules.read), "allow");
+  assert.equal(evaluateOpenCodeRuleMap("/opt/other/.mimocode/skills/one/secret.txt", rules.read), undefined);
+});
+
+test("MiMo native skill reads accept a canonical path for an aliased project directory", () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-mimo-aliased-project-"));
+  try {
+    const rules = buildOpenCodeNativeSkillsPermissionRules({ mimo: true, cwd: project });
+    const canonical = fs.realpathSync(project);
+    assert.equal(evaluateOpenCodeRuleMap(`${canonical}/.mimocode/skills/one/reference.md`, rules.read), "allow");
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true });
+  }
+});
+
 test("MiMo native skills can read Windows built-in skill references", () => {
   const rules = buildOpenCodeNativeSkillsPermissionRules({
     mimo: true,

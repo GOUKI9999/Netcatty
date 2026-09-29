@@ -164,9 +164,24 @@ function getMimoNativeSkillDirectories({ mimo = false, env = {}, pathModule = pa
     .filter(Boolean);
   const home = absolute(env.HOME) || absolute(env.USERPROFILE);
   const nativeSuffixes = getNativeSkillSuffixes({ mimo: true, env });
-  const scopedDirs = [cwd, home]
-    .filter((base) => typeof base === "string" && pathModule.isAbsolute(base))
-    .flatMap((base) => nativeSuffixes.map((suffix) => pathModule.join(base, suffix)));
+  const canonical = (base) => {
+    try { return fs.realpathSync(base); } catch { return null; }
+  };
+  const projectSuffixes = nativeSuffixes.filter((suffix) =>
+    !suffix.startsWith(".config/") && !suffix.startsWith(".cache/") && !suffix.startsWith(".local/"));
+  const projectBases = new Set();
+  for (const base of [cwd, cwd && canonical(cwd)]) {
+    if (typeof base !== "string" || !pathModule.isAbsolute(base)) continue;
+    for (let current = pathModule.resolve(base); !projectBases.has(current); current = pathModule.dirname(current)) {
+      projectBases.add(current);
+    }
+  }
+  const scopedDirs = [
+    ...[...projectBases].flatMap((base) => projectSuffixes.map((suffix) => pathModule.join(base, suffix))),
+    ...[home, home && canonical(home)]
+      .filter((base) => typeof base === "string" && pathModule.isAbsolute(base))
+      .flatMap((base) => nativeSuffixes.map((suffix) => pathModule.join(base, suffix))),
+  ];
   return [
     ...scopedDirs,
     ...(mimoHome ? [
