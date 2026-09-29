@@ -114,7 +114,7 @@ test("spawnMimoServer launches `mimo serve` with hostname/port argv and passes M
       config: { autoupdate: false },
       port: 5123,
       binPath: bin,
-      env: { MIMOCODE_BIN: bin, NETCATTY_TEST: "1" },
+      env: { MIMOCODE_BIN: bin, NETCATTY_TEST: "1", NODE_OPTIONS: "--require=/tmp/unsafe.js" },
     });
 
     assert.equal(calls.length, 1);
@@ -130,6 +130,9 @@ test("spawnMimoServer launches `mimo serve` with hostname/port argv and passes M
     assert.equal(options.env.MIMOCODE_CONFIG_CONTENT, JSON.stringify({ autoupdate: false }));
     assert.equal(options.env.MIMOCODE_BIN, bin);
     assert.equal(options.env.NETCATTY_TEST, "1");
+    assert.equal(options.env.NODE_OPTIONS, undefined);
+    assert.equal(options.env.MIMOCODE_SERVER_USERNAME, "netcatty");
+    assert.ok(options.env.MIMOCODE_SERVER_PASSWORD.length >= 32);
 
     assert.equal(instance.url, "http://127.0.0.1:5123");
     assert.equal(instance.server.url, "http://127.0.0.1:5123");
@@ -249,6 +252,59 @@ test("spawnMimoServer rejects when the CLI exits before readiness", async () => 
   }
 });
 
+test("spawnMimoServer bounds startup diagnostics from a noisy CLI", async () => {
+  const child = fakeChild();
+  spawnMock = () => {
+    setImmediate(() => {
+      child.stderr.emit("data", Buffer.from(`${"x".repeat(200 * 1024)}\ntail`));
+      child.emit("exit", 3);
+    });
+    return child;
+  };
+  try {
+    await assert.rejects(spawnMimoServer({ timeout: 1000 }), (error) => {
+      assert.match(error.message, /tail$/);
+      assert.ok(error.message.length < 66 * 1024);
+      return true;
+    });
+  } finally {
+    spawnMock = null;
+  }
+});
+
+test("spawnMimoServer finds readiness before a large trailing log chunk", async () => {
+  const child = fakeChild();
+  spawnMock = () => {
+    setImmediate(() => child.stdout.emit("data", Buffer.from(`mimocode server listening on http://127.0.0.1:5124\n${"x".repeat(200 * 1024)}`)));
+    return child;
+  };
+  try {
+    const instance = await spawnMimoServer({ timeout: 1000 });
+    assert.equal(instance.url, "http://127.0.0.1:5124");
+    instance.server.close();
+  } finally {
+    spawnMock = null;
+  }
+});
+
+test("spawnMimoServer waits for the complete readiness URL across chunks", async () => {
+  const child = fakeChild();
+  spawnMock = () => {
+    setImmediate(() => {
+      child.stdout.emit("data", Buffer.from("mimocode server listening on http://127.0.0.1:5"));
+      setImmediate(() => child.stdout.emit("data", Buffer.from("124\n")));
+    });
+    return child;
+  };
+  try {
+    const instance = await spawnMimoServer({ timeout: 1000 });
+    assert.equal(instance.url, "http://127.0.0.1:5124");
+    instance.server.close();
+  } finally {
+    spawnMock = null;
+  }
+});
+
 test("spawnMimoServer rejects when the spawn itself errors", async () => {
   const child = fakeChild();
   const spawnError = Object.assign(new Error("spawn mimo ENOENT"), { code: "ENOENT" });
@@ -324,6 +380,7 @@ test("stopMimoProcess signals the whole process group on POSIX and escalates to 
     stopMimoProcess(child, {
       platform,
       killGroup: (pid, signal) => signals.push([pid, signal]),
+      groupAlive: () => true,
       graceMs: 0,
     });
     // The shim alone must not be the target: its native child would survive.
@@ -342,6 +399,60 @@ test("stopMimoProcess signals the whole process group on POSIX and escalates to 
     graceMs: 0,
   });
   assert.equal(child.killCount, 1);
+});
+
+test("stopMimoProcess cancels escalation when the process group exits and does not schedule it twice", async () => {
+  const signals = [];
+  const child = fakeChild();
+  child.pid = 4242;
+  let alive = true;
+  const options = {
+    platform: "darwin",
+    killGroup: (pid, signal) => signals.push([pid, signal]),
+    groupAlive: () => alive,
+    graceMs: 15,
+    pollMs: 1,
+  };
+  stopMimoProcess(child, options);
+  stopMimoProcess(child, options);
+  alive = false;
+  child.exitCode = 0;
+  child.emit("exit", 0, null);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.deepEqual(signals, [[4242, "SIGTERM"]]);
+});
+
+test("stopMimoProcess escalates if the shim exits while its server group lives", async () => {
+  const signals = [];
+  const child = fakeChild();
+  child.pid = 4242;
+  stopMimoProcess(child, {
+    platform: "darwin",
+    killGroup: (pid, signal) => signals.push([pid, signal]),
+    groupAlive: () => true,
+    graceMs: 5,
+    pollMs: 1,
+  });
+  child.exitCode = 0;
+  child.emit("exit", 0, null);
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.deepEqual(signals, [[4242, "SIGTERM"], [4242, "SIGKILL"]]);
+});
+
+test("stopMimoProcess can stop a live server group after its launcher already exited", async () => {
+  const signals = [];
+  const child = fakeChild();
+  child.pid = 4242;
+  child.exitCode = 0;
+  stopMimoProcess(child, {
+    platform: "darwin",
+    killGroup: (pid, signal) => signals.push([pid, signal]),
+    groupAlive: () => true,
+    graceMs: 5,
+    pollMs: 1,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.deepEqual(signals, [[4242, "SIGTERM"], [4242, "SIGKILL"]]);
 });
 
 test("runMimoTurn creates a session, streams deltas, and returns the session id", async () => {
@@ -375,9 +486,17 @@ test("runMimoTurn creates a session, streams deltas, and returns the session id"
     prompt: "hello",
     cwd: "/repo",
     model: "openai/gpt-5.1",
+    toolIntegrationMode: "skills",
+    skillsPathAllowlist: ["/opt/netcatty/**"],
+    env: { MIMOCODE_HOME: "/opt/mimo-home" },
     emitter,
     abortController,
-    mimoFactory: async () => ({ client, server: { close() {} } }),
+    mimoFactory: async ({ config }) => {
+      assert.equal(config.permission.read["/opt/netcatty/**"], "allow");
+      assert.equal(config.permission.read["/opt/mimo-home/config/skill/*"], "allow");
+      assert.equal(config.permission.read["/opt/mimo-home/data/builtin_skills/**"], "allow");
+      return { client, server: { close() {} } };
+    },
   });
 
   assert.deepEqual(result, { sessionId: "sess-1" });

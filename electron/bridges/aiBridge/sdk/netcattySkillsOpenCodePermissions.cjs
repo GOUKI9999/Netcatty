@@ -88,42 +88,105 @@ const OPENCODE_NATIVE_SKILL_DIR_SUFFIXES = [
   ".agents/skills",
   ".cache/opencode/skills",
 ];
+const MIMO_NATIVE_SKILL_DIR_SUFFIXES = [
+  ".mimocode/skill",
+  ".mimocode/skills",
+  ".config/mimocode/skill",
+  ".config/mimocode/skills",
+  ".cache/mimocode/skills",
+  ".local/share/mimocode/builtin_skills",
+  ".local/share/mimocode/compose",
+  ".codex/skills",
+];
+
+function getNativeSkillSuffixes({ mimo = false } = {}) {
+  return mimo
+    ? [...OPENCODE_NATIVE_SKILL_DIR_SUFFIXES, ...MIMO_NATIVE_SKILL_DIR_SUFFIXES]
+    : OPENCODE_NATIVE_SKILL_DIR_SUFFIXES;
+}
+
+function getMimoNativeSkillDirectories({ mimo = false, env = {}, pathModule = path } = {}) {
+  if (!mimo) return [];
+  const absolute = (value) => typeof value === "string" && pathModule.isAbsolute(value) ? value : null;
+  const mimoHome = absolute(env.MIMOCODE_HOME);
+  const configDir = absolute(env.MIMOCODE_CONFIG_DIR);
+  const xdgConfig = absolute(env.XDG_CONFIG_HOME);
+  const xdgData = absolute(env.XDG_DATA_HOME);
+  const xdgCache = absolute(env.XDG_CACHE_HOME);
+  return [
+    ...(mimoHome ? [
+      pathModule.join(mimoHome, "config", "skill"),
+      pathModule.join(mimoHome, "config", "skills"),
+      pathModule.join(mimoHome, "data", "builtin_skills"),
+      pathModule.join(mimoHome, "data", "compose"),
+      pathModule.join(mimoHome, "cache", "skills"),
+    ] : []),
+    ...(configDir ? [pathModule.join(configDir, "skill"), pathModule.join(configDir, "skills")] : []),
+    ...(xdgConfig ? [pathModule.join(xdgConfig, "mimocode", "skill"), pathModule.join(xdgConfig, "mimocode", "skills")] : []),
+    ...(xdgData ? [pathModule.join(xdgData, "mimocode", "builtin_skills"), pathModule.join(xdgData, "mimocode", "compose")] : []),
+    ...(xdgCache ? [pathModule.join(xdgCache, "mimocode", "skills")] : []),
+  ];
+}
+
+function getMimoRelativeSkillDirectory(dir, options = {}) {
+  const pathModule = options.pathModule || path;
+  const base = toOpenCodeDirectoryBase(dir, options);
+  if (!base) return null;
+  const cwd = options.cwd || process.cwd();
+  const relative = pathModule.relative(pathModule.resolve(cwd), pathModule.resolve(dir));
+  return normalizeOpenCodePath(relative || ".", options.platform || process.platform);
+}
 
 // OpenCode's `read` permission checks match worktree-relative paths (e.g.
 // "../../.opencode/skills/foo/references/doc.md") while `external_directory`
 // checks match absolute directory globs ("C:/Users/me/.opencode/skills/foo/*").
 // Anchoring each well-known suffix behind a leading wildcard covers both
 // forms on every platform (OpenCode normalizes "\\" to "/" before matching).
-function buildOpenCodeNativeSkillPermissionPatterns() {
-  return OPENCODE_NATIVE_SKILL_DIR_SUFFIXES.flatMap((suffix) => [
+function buildOpenCodeNativeSkillPermissionPatterns(options = {}) {
+  return getNativeSkillSuffixes(options).flatMap((suffix) => [
     `*${suffix}`,
     `*${suffix}/*`,
     `*${suffix}/**`,
-  ]);
+  ]).concat(getMimoNativeSkillDirectories(options).flatMap((dir) => toOpenCodeDirectoryPermissionPatterns(dir, options)));
 }
 
 // OpenCode's default rules gate `.env` secret files behind approval. The
 // broad skill-directory read allows above would win over those defaults
 // (last matching rule wins), so re-deny dot-env files inside skill dirs
 // after the allow entries to keep secret-file protection intact.
-function buildOpenCodeNativeSkillEnvDenyPatterns() {
-  return OPENCODE_NATIVE_SKILL_DIR_SUFFIXES.flatMap((suffix) => [
+function buildOpenCodeNativeSkillEnvDenyPatterns(options = {}) {
+  const suffixRules = getNativeSkillSuffixes(options).flatMap((suffix) => [
     `*${suffix}/**.env`,
     `*${suffix}/**.env.*`,
   ]);
+  const directoryRules = getMimoNativeSkillDirectories(options).flatMap((dir) => {
+    const base = toOpenCodeDirectoryBase(dir, options);
+    const relative = getMimoRelativeSkillDirectory(dir, options);
+    return base && relative
+      ? [`${base}/**.env`, `${base}/**.env.*`, `${relative}/**.env`, `${relative}/**.env.*`]
+      : [];
+  });
+  return suffixRules.concat(directoryRules);
 }
 
 // Base rules shared by every tool-integration mode so OpenCode's native
 // skills keep working: allow loading skills and reading their files while
 // still denying all other external directory access.
-function buildOpenCodeNativeSkillsPermissionRules() {
+function buildOpenCodeNativeSkillsPermissionRules(options = {}) {
   const external_directory = { "*": "deny" };
   const read = {};
-  for (const pattern of buildOpenCodeNativeSkillPermissionPatterns()) {
+  for (const pattern of buildOpenCodeNativeSkillPermissionPatterns(options)) {
     external_directory[pattern] = "allow";
     read[pattern] = "allow";
   }
-  for (const pattern of buildOpenCodeNativeSkillEnvDenyPatterns()) {
+  for (const dir of getMimoNativeSkillDirectories(options)) {
+    const relative = getMimoRelativeSkillDirectory(dir, options);
+    if (!relative) continue;
+    for (const pattern of [relative, `${relative}/*`, `${relative}/**`]) {
+      read[pattern] = "allow";
+    }
+  }
+  for (const pattern of buildOpenCodeNativeSkillEnvDenyPatterns(options)) {
     read[pattern] = "deny";
   }
   return {
@@ -158,8 +221,8 @@ function buildNetcattySkillsOpenCodePathAllowlist({
   ]);
 }
 
-function buildOpenCodeSkillsPermissionRules(pathAllowlist = []) {
-  const { read, external_directory } = buildOpenCodeNativeSkillsPermissionRules();
+function buildOpenCodeSkillsPermissionRules(pathAllowlist = [], nativeSkillOptions = {}) {
+  const { read, external_directory } = buildOpenCodeNativeSkillsPermissionRules(nativeSkillOptions);
   for (const pattern of pathAllowlist) {
     external_directory[pattern] = "allow";
     read[pattern] = "allow";

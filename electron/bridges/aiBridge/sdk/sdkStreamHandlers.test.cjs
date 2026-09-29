@@ -101,6 +101,14 @@ test("SDK session keys include backend and resolved CLI path", () => {
   );
 });
 
+test("MiMo model catalog cache changes with its config roots", () => {
+  const base = buildSdkModelCacheKey("mimo", "/usr/bin/mimo", { MIMOCODE_HOME: "/one" });
+  assert.notEqual(base, buildSdkModelCacheKey("mimo", "/usr/bin/mimo", { MIMOCODE_HOME: "/two" }));
+  assert.notEqual(base, buildSdkModelCacheKey("mimo", "/usr/bin/mimo", { MIMOCODE_HOME: "/one", MIMOCODE_CONFIG_DIR: "/extra" }));
+  assert.notEqual(base, buildSdkModelCacheKey("mimo", "/usr/bin/mimo", { MIMOCODE_HOME: "/one", MIMOCODE_BIN: "/another/mimo" }));
+  assert.notEqual(base, buildSdkModelCacheKey("mimo", "/usr/bin/mimo", { MIMOCODE_HOME: "/one", MIMOCODE_BIN_PATH: "/another/mimo" }));
+});
+
 test("Cursor session keys isolate CLI login from API key auth modes", () => {
   assert.notEqual(
     buildSdkSessionKey("chat-1", "cursor", "/usr/bin/agent", "sdk", "cli-login"),
@@ -277,7 +285,7 @@ test("empty or failed live catalogs surface a failure for the warning path", asy
   );
 });
 
-test("CodeBuddy and OpenCode keep Netcatty context in the system prompt only", () => {
+test("CodeBuddy, OpenCode and MiMo keep Netcatty context in the system prompt only", () => {
   const input = {
     turnPrompt: "user request",
     contextualPrompt: "netcatty context\n\nuser request",
@@ -293,6 +301,13 @@ test("CodeBuddy and OpenCode keep Netcatty context in the system prompt only", (
   assert.deepEqual(resolveSdkPromptPlacement({
     ...input,
     backendKey: "opencode",
+  }), {
+    prompt: "user request",
+    systemPrompt: "netcatty context",
+  });
+  assert.deepEqual(resolveSdkPromptPlacement({
+    ...input,
+    backendKey: "mimo",
   }), {
     prompt: "user request",
     systemPrompt: "netcatty context",

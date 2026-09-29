@@ -20,8 +20,10 @@
  */
 const fs = require("node:fs");
 const net = require("node:net");
+const { randomBytes } = require("node:crypto");
 const { spawn, spawnSync } = require("node:child_process");
 const { prepareCommandForSpawn, resolveCliFromPath } = require("../../ai/shellUtils.cjs");
+const { buildSdkAgentEnv } = require("./env.cjs");
 const {
   buildOpenCodeConfig,
   buildOpenCodePromptParts,
@@ -74,23 +76,41 @@ function resolveUsableMimoBinPath(binPath, env) {
 // How long the server's process group gets to exit on SIGTERM before the
 // remaining members are killed outright.
 const MIMO_STOP_GRACE_MS = 2000;
+const stoppingMimoChildren = new WeakSet();
 
 function killProcessGroup(pid, signal) {
   process.kill(-pid, signal);
 }
 
+function isProcessGroupAlive(pid) {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code !== "ESRCH";
+  }
+}
+
 function stopMimoProcess(child, {
   platform = process.platform,
   killGroup = killProcessGroup,
+  groupAlive = isProcessGroupAlive,
   graceMs = MIMO_STOP_GRACE_MS,
+  pollMs = 100,
 } = {}) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  if (!child || stoppingMimoChildren.has(child)) return;
+  const launcherExited = child.exitCode !== null || child.signalCode !== null;
+  // The npm launcher may exit while its native server still owns the group.
+  if (launcherExited && (platform === "win32" || !child.pid || !groupAlive(child.pid))) return;
   // `mimo` is launched through cmd.exe when the resolved path is the npm .cmd
   // shim, so killing the direct child can orphan the real server. Kill the
   // whole tree instead (same approach the SDK's own stop() uses).
   if (platform === "win32" && child.pid) {
     const out = spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
-    if (!out.error && out.status === 0) return;
+    if (!out.error && out.status === 0) {
+      stoppingMimoChildren.add(child);
+      return;
+    }
   }
   // On macOS/Linux the official npm package's `mimo` is a Node shim that runs
   // the native binary through spawnSync, so signalling only the shim leaves
@@ -100,13 +120,25 @@ function stopMimoProcess(child, {
   if (platform !== "win32" && child.pid) {
     try {
       killGroup(child.pid, "SIGTERM");
+      stoppingMimoChildren.add(child);
       const timer = setTimeout(() => {
+        clearInterval(poll);
+        if (!groupAlive(child.pid)) return;
         try { killGroup(child.pid, "SIGKILL"); } catch {}
       }, graceMs);
+      // The npm shim can exit before its native server. Watch the process
+      // group rather than the shim, and cancel escalation once the group is gone.
+      const poll = setInterval(() => {
+        if (groupAlive(child.pid)) return;
+        clearTimeout(timer);
+        clearInterval(poll);
+      }, Math.max(1, Math.min(pollMs, graceMs)));
       timer.unref?.();
+      poll.unref?.();
       return;
     } catch {}
   }
+  if (launcherExited) return;
   try { child.kill(); } catch {}
 }
 
@@ -143,13 +175,16 @@ async function spawnMimoServer({
   const resolved = resolveUsableMimoBinPath(binPath, env) || resolveCliFromPath("mimo", env);
   const command = resolved || "mimo";
   const args = ["serve", `--hostname=${hostname}`, `--port=${port}`];
+  const serverUsername = "netcatty";
+  const serverPassword = randomBytes(32).toString("base64url");
 
   // The mimo binary reads its config from MIMOCODE_CONFIG_CONTENT (verified in
   // the 0.1.15 binary); OPENCODE_CONFIG_CONTENT is ignored.
   const childEnv = {
-    ...process.env,
-    ...(env || {}),
+    ...buildSdkAgentEnv({ shellEnv: env || process.env }),
     MIMOCODE_CONFIG_CONTENT: JSON.stringify(config ?? {}),
+    MIMOCODE_SERVER_USERNAME: serverUsername,
+    MIMOCODE_SERVER_PASSWORD: serverPassword,
   };
 
   const spawnSpec = prepareCommandForSpawn(command, args, { unwrapNativeExe: false });
@@ -168,6 +203,7 @@ async function spawnMimoServer({
 
   const url = await new Promise((resolve, reject) => {
     let output = "";
+    let pendingLine = "";
     let settled = false;
     const timer = setTimeout(() => {
       if (settled) return;
@@ -184,14 +220,23 @@ async function spawnMimoServer({
     };
 
     const onData = (chunk) => {
-      output += chunk.toString();
-      for (const line of output.split("\n")) {
-        const match = line.match(MIMO_LISTENING_RE);
-        if (match) {
-          finish(resolve, match[1]);
-          return;
-        }
+      if (settled) return;
+      const text = chunk.toString();
+      // Keep just the tail for diagnostics and the unfinished line for the
+      // readiness banner; neither grows with a noisy long-running server.
+      output = (output + text).slice(-64 * 1024);
+      const candidate = pendingLine + text;
+      const lastNewline = candidate.lastIndexOf("\n");
+      if (lastNewline < 0) {
+        pendingLine = candidate.slice(-8 * 1024);
+        return;
       }
+      const match = candidate.slice(0, lastNewline + 1).match(MIMO_LISTENING_RE);
+      if (match) {
+        finish(resolve, match[1]);
+        return;
+      }
+      pendingLine = candidate.slice(lastNewline + 1).slice(-8 * 1024);
     };
     child.stdout?.on("data", onData);
     child.stderr?.on("data", onData);
@@ -219,7 +264,12 @@ async function spawnMimoServer({
 
   return {
     url,
-    client: sdk.createOpencodeClient({ baseUrl: url }),
+    client: sdk.createOpencodeClient({
+      baseUrl: url,
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${serverUsername}:${serverPassword}`).toString("base64")}`,
+      },
+    }),
     server: { url, close },
   };
 }
@@ -290,7 +340,10 @@ async function runMimoTurn({
   skillsPathAllowlist, resumeSessionId, env, binPath, emitter, abortController, mimoFactory,
 }) {
   const emit = createMiMoEmitter(emitter);
-  const config = buildOpenCodeConfig({ model, injectedMcpServers, toolIntegrationMode, skillsPathAllowlist });
+  const config = buildOpenCodeConfig({
+    model, injectedMcpServers, toolIntegrationMode, skillsPathAllowlist,
+    nativeSkillOptions: { mimo: true, env: { ...process.env, ...env }, cwd },
+  });
   let instance = null;
   let sessionId = resumeSessionId || null;
   let hasContent = false;

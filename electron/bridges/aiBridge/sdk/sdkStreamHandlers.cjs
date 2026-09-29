@@ -88,6 +88,13 @@ const SDK_MODEL_CACHE_ENV_KEYS = [
   "OPENCODE_CONFIG",
   "OPENCODE_CONFIG_DIR",
   "OPENCODE_CONFIG_CONTENT",
+  "MIMOCODE_HOME",
+  "MIMOCODE_BIN",
+  "MIMOCODE_BIN_PATH",
+  "MIMOCODE_CONFIG_DIR",
+  "MIMOCODE_MIMO_ONLY",
+  "XDG_DATA_HOME",
+  "XDG_CACHE_HOME",
   "CLAUDE_CODE_EXECUTABLE",
   "CODEBUDDY_CODE_PATH",
   "CURSOR_API_KEY",
@@ -191,7 +198,7 @@ function resolveSdkPromptPlacement({
   contextualPrompt,
   systemContext,
 }) {
-  const supportsSystemContext = backendKey === "opencode" || backendKey === "codebuddy";
+  const supportsSystemContext = backendKey === "opencode" || backendKey === "mimo" || backendKey === "codebuddy";
   return {
     prompt: supportsSystemContext ? turnPrompt : contextualPrompt,
     systemPrompt: supportsSystemContext ? systemContext : undefined,
@@ -785,7 +792,7 @@ function registerSdkStreamHandlers(ctx) {
               }
             },
           };
-          const skillsPathAllowlist = effectiveMode === "skills" && backendKey === "opencode"
+          const skillsPathAllowlist = effectiveMode === "skills" && (backendKey === "opencode" || backendKey === "mimo")
             ? buildNetcattySkillsOpenCodePathAllowlist({
               launcherPath: NETCATTY_TOOL_LAUNCHER_PATH,
               cliScriptPath: NETCATTY_TOOL_CLI_PATH,

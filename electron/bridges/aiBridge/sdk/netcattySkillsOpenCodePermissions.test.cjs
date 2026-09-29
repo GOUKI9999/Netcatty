@@ -214,3 +214,37 @@ test("native skill patterns match OpenCode permission requests for skill files (
   assert.equal(matchesAnyPattern("../../etc/passwd", patterns), false);
   assert.equal(matchesAnyPattern("C:/Users/me/.ssh/id_rsa", patterns), false);
 });
+
+test("MiMo native skills can read references from default and overridden roots without reading env files", () => {
+  const options = {
+    mimo: true,
+    cwd: "/work/project",
+    env: {
+      MIMOCODE_HOME: "/opt/mimo-home",
+      MIMOCODE_CONFIG_DIR: "/opt/mimo-extra",
+      XDG_CONFIG_HOME: "/opt/xdg-config",
+    },
+  };
+  const rules = buildOpenCodeSkillsPermissionRules(["/opt/netcatty-tool/**"], options);
+  const readable = [
+    "/home/me/.mimocode/skills/one/references/guide.md",
+    "/home/me/.config/mimocode/skill/one/references/guide.md",
+    "/home/me/.local/share/mimocode/builtin_skills/0.1.15/skills/one/references/guide.md",
+    "/home/me/.cache/mimocode/skills/one/references/guide.md",
+    "/opt/mimo-home/data/compose/0.1.15/skills/one/references/guide.md",
+    "/opt/mimo-home/config/skill/one/references/guide.md",
+    "/opt/mimo-extra/skills/one/references/guide.md",
+    "/opt/xdg-config/mimocode/skills/one/references/guide.md",
+  ];
+  for (const file of readable) {
+    assert.equal(evaluateOpenCodeRuleMap(file, rules.read), "allow", file);
+    assert.equal(evaluateOpenCodeRuleMap(path.posix.dirname(file), rules.external_directory), "allow", file);
+  }
+  assert.equal(evaluateOpenCodeRuleMap("/opt/mimo-home/config/skill/one/.env", rules.read), "deny");
+  assert.equal(evaluateOpenCodeRuleMap("../../opt/mimo-home/config/skill/one/references/guide.md", rules.read), "allow");
+  assert.equal(evaluateOpenCodeRuleMap("../../opt/mimo-home/config/skill/one/.env", rules.read), "deny");
+  assert.equal(evaluateOpenCodeRuleMap("/home/me/.mimocode/skills/one/.env.local", rules.read), "deny");
+  assert.equal(evaluateOpenCodeRuleMap("/opt/unrelated/secret.md", rules.read), undefined);
+  assert.equal(evaluateOpenCodeRuleMap("/opt/unrelated", rules.external_directory), "deny");
+  assert.equal(evaluateOpenCodeRuleMap("/home/me/.mimocode/skills/one/references/guide.md", buildOpenCodeNativeSkillsPermissionRules().read), undefined);
+});
