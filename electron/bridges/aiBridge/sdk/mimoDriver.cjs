@@ -482,7 +482,7 @@ function createMiMoEmitter(emitter) {
 
 async function runMimoTurn({
   prompt, systemPrompt, attachments, cwd, model, injectedMcpServers, toolIntegrationMode,
-  skillsPathAllowlist, permissionMode = "confirm", chatSessionId, requestApprovalFromRenderer,
+  skillsPathAllowlist, permissionMode = "confirm", chatSessionId, requestApprovalFromRenderer, clearPendingApprovals,
   resumeSessionId, env, binPath, emitter, abortController, mimoFactory, mimoConfigReader,
 }) {
   const emit = createMiMoEmitter(emitter);
@@ -496,6 +496,7 @@ async function runMimoTurn({
   let turnStarted = false;
   let abortSent = false;
   let removeAbortListener = null;
+  let pendingNativeApproval = false;
   const state = { reasoningOpen: false };
   const directoryQuery = cwd ? { directory: cwd } : undefined;
 
@@ -615,6 +616,7 @@ async function runMimoTurn({
               continue;
             }
             answeredPermissions.add(request.id);
+            pendingNativeApproval = true;
             const approval = permissionMode === "confirm" && typeof requestApprovalFromRenderer === "function"
               ? Promise.resolve().then(() => requestApprovalFromRenderer("MiMo Code permission", {
                 permission: request.permission || request.type,
@@ -630,6 +632,7 @@ async function runMimoTurn({
             ]);
             if (decision.type === "abort") break;
             if (decision.type === "exit") throw new Error("MiMo Code service exited during approval");
+            pendingNativeApproval = false;
             await Promise.race([
               instance.server.replyPermission(payload.type, request, decision.approved, abortController?.signal),
               abortWait.promise.then(() => ({ type: "abort" })),
@@ -744,6 +747,9 @@ async function runMimoTurn({
     }
     return { sessionId };
   } finally {
+    if (pendingNativeApproval && chatSessionId) {
+      try { clearPendingApprovals?.(chatSessionId); } catch {}
+    }
     removeAbortListener?.();
     closeMimoEventIterator(iterator);
     try { instance?.server?.close?.(); } catch {}

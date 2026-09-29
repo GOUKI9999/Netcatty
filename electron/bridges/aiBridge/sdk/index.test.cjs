@@ -34,12 +34,14 @@ test("MiMo driver receives Netcatty permission mode and approval bridge", async 
   const original = mimoDriver.runMimoTurn;
   let received;
   const approve = async () => true;
+  const clear = () => {};
   mimoDriver.runMimoTurn = async (options) => { received = options; return { sessionId: "sess-1" }; };
   try {
-    await getDriver("mimo").runTurn({ permissionMode: "confirm", chatSessionId: "chat-1", requestApprovalFromRenderer: approve });
+    await getDriver("mimo").runTurn({ permissionMode: "confirm", chatSessionId: "chat-1", requestApprovalFromRenderer: approve, clearPendingApprovals: clear });
     assert.equal(received.permissionMode, "confirm");
     assert.equal(received.chatSessionId, "chat-1");
     assert.equal(received.requestApprovalFromRenderer, approve);
+    assert.equal(received.clearPendingApprovals, clear);
   } finally {
     mimoDriver.runMimoTurn = original;
   }

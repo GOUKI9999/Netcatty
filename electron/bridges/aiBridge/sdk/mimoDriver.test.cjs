@@ -669,6 +669,46 @@ test("runMimoTurn rejects an unexpected MiMo permission request in observer mode
   assert.deepEqual(replies.map(([type, request, approved]) => [type, request.id, approved]), [["permission.asked", "per_2", false]]);
 });
 
+test("runMimoTurn clears a pending approval when the MiMo service exits", async () => {
+  const { events, emitter } = collector();
+  let signalExit;
+  const exited = new Promise((resolve) => { signalExit = resolve; });
+  let approvalStarted;
+  const approvalSeen = new Promise((resolve) => { approvalStarted = resolve; });
+  const cleared = [];
+  const stream = {
+    async *[Symbol.asyncIterator]() {
+      yield { payload: { type: "permission.updated", properties: {
+        id: "per_3", sessionID: "sess-1", type: "bash", title: "Run command", metadata: {},
+      } } };
+      await new Promise(() => {});
+    },
+  };
+  const running = runMimoTurn({
+    prompt: "hello",
+    toolIntegrationMode: "skills",
+    permissionMode: "confirm",
+    chatSessionId: "chat-1",
+    requestApprovalFromRenderer: () => { approvalStarted(); return new Promise(() => {}); },
+    clearPendingApprovals: (chatId) => { cleared.push(chatId); },
+    emitter,
+    abortController: new AbortController(),
+    mimoFactory: async () => ({
+      client: {
+        global: { event: async () => ({ stream: connectedStream(stream) }) },
+        session: { create: async () => ({ data: { id: "sess-1" } }), promptAsync: async () => ({ data: true }) },
+      },
+      server: { exited, close() {}, replyPermission: async () => {} },
+    }),
+  });
+  await approvalSeen;
+  signalExit();
+  const result = await Promise.race([running, new Promise((_, reject) => setTimeout(() => reject(new Error("MiMo turn hung after service exit")), 500))]);
+  assert.deepEqual(result, { sessionId: "sess-1" });
+  assert.deepEqual(cleared, ["chat-1"]);
+  assert.equal(events.some((event) => event.k === "error"), true);
+});
+
 test("runMimoTurn does not grant a project-configured system directory", async () => {
   const { events, emitter } = collector();
   let calls = 0;

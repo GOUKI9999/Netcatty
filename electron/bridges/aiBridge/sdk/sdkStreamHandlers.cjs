@@ -852,6 +852,7 @@ function registerSdkStreamHandlers(ctx) {
             // when the CLI hits a security restriction, route the decision
             // through the renderer approval UI instead of throwing an error.
             requestApprovalFromRenderer: mcpServerBridge.requestApprovalFromRenderer,
+            clearPendingApprovals: mcpServerBridge.clearPendingApprovals,
             // SDK 0.3.258 advanced options
             effort: effort || undefined,
             maxTurns: maxTurns || undefined,

@@ -412,6 +412,7 @@ const DRIVER_REGISTRY = {
         permissionMode: ctx.permissionMode,
         chatSessionId: ctx.chatSessionId,
         requestApprovalFromRenderer: ctx.requestApprovalFromRenderer,
+        clearPendingApprovals: ctx.clearPendingApprovals,
         resumeSessionId: ctx.resumeSessionId,
         emitter: ctx.emitter,
         abortController: ctx.abortController,
