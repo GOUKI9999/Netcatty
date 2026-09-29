@@ -991,6 +991,19 @@ test("resolveSdkBackendBinPath keeps non-CodeBuddy SDK path normalization", () =
   assert.equal(out, "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js");
 });
 
+test("resolveSdkBackendBinPath prefers the MiMo environment path over PATH", () => {
+  const out = resolveSdkBackendBinPath({
+    backendKey: "mimo",
+    shellEnv: { PATH: "/usr/bin" },
+    env: { MIMOCODE_BIN: "/opt/mimo/bin/mimo" },
+    normalizeCliPathForPlatform: (value) => value,
+    resolveCliFromPath: () => "/usr/bin/mimo",
+    resolveSdkBinPath: () => "/usr/bin/mimo",
+    realpath: (value) => value,
+  });
+  assert.equal(out, "/opt/mimo/bin/mimo");
+});
+
 test("resolveSdkBackendBinPath does not fall back to Windows shell shims for non-CodeBuddy", () => {
   const out = resolveSdkBackendBinPath({
     backendKey: "codex",

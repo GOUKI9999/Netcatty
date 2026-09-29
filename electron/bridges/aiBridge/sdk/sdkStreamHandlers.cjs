@@ -441,6 +441,11 @@ function resolveSdkBackendBinPath({
     const rawPath = configuredEnvPath || resolveCliFromPath(backendKey, shellEnv) || undefined;
     return rawPath ? resolveRealCliPath(rawPath, realpath) : undefined;
   }
+  if (backendKey === "mimo") {
+    const configuredEnvPath = normalizeCliPathForPlatform?.(env?.MIMOCODE_BIN || env?.MIMOCODE_BIN_PATH);
+    const rawPath = configuredEnvPath || resolveCliFromPath(backendKey, shellEnv) || undefined;
+    return rawPath ? resolveRealCliPath(rawPath, realpath) : undefined;
+  }
   return resolveSdkBinPath?.(backendKey, shellEnv) || undefined;
 }
 

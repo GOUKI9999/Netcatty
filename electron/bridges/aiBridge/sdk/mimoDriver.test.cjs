@@ -518,7 +518,6 @@ test("runMimoTurn creates a session, streams deltas, and returns the session id"
 test("runMimoTurn allows configured custom skill paths before sending a prompt", async () => {
   const { events, emitter } = collector();
   const calls = [];
-  let firstClosed = false;
   const stream = {
     async *[Symbol.asyncIterator]() {
       yield { payload: { type: "message.part.updated", properties: { part: { type: "text", sessionID: "sess-1", id: "p1", text: "ok" }, delta: "ok" } } };
@@ -530,20 +529,12 @@ test("runMimoTurn allows configured custom skill paths before sending a prompt",
     cwd: "/work/project",
     emitter,
     abortController: new AbortController(),
+    mimoConfigReader: async () => ({ project: ["/opt/team-skills"], global: ["/opt/team-skills"] }),
     mimoFactory: async ({ config }) => {
       calls.push(config);
-      if (calls.length === 1) {
-        return {
-          client: { config: { get: async () => ({ data: { skills: { paths: ["/opt/team-skills"] } } }) } },
-          server: {
-            close() { firstClosed = true; },
-            getGlobalConfig: async () => ({ skills: { paths: ["/opt/team-skills"] } }),
-          },
-        };
-      }
-      assert.equal(firstClosed, true);
       assert.equal(config.permission.read["/opt/team-skills/**"], "allow");
       assert.equal(config.permission.read["../../opt/team-skills/**"], "allow");
+      assert.deepEqual(config.skills.paths, ["/opt/team-skills"]);
       return {
         client: {
           global: { event: async () => ({ stream: connectedStream(stream) }) },
@@ -554,7 +545,7 @@ test("runMimoTurn allows configured custom skill paths before sending a prompt",
     },
   });
   assert.deepEqual(result, { sessionId: "sess-1" });
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 1);
   assert.equal(events.some((event) => event.k === "done"), true);
 });
 
@@ -572,12 +563,13 @@ test("runMimoTurn does not grant a project-configured system directory", async (
     cwd: process.cwd(),
     emitter,
     abortController: new AbortController(),
+    mimoConfigReader: async () => ({ project: ["/etc"], global: [] }),
     mimoFactory: async ({ config }) => {
       calls += 1;
       assert.equal(config.permission.read["/etc/**"], undefined);
+      assert.deepEqual(config.skills.paths, []);
       return {
         client: {
-          config: { get: async () => ({ data: { skills: { paths: ["/etc"] } } }) },
           global: { event: async () => ({ stream: connectedStream(stream) }) },
           session: { create: async () => ({ data: { id: "sess-1" } }), promptAsync: async () => ({ data: true }) },
         },
@@ -589,20 +581,18 @@ test("runMimoTurn does not grant a project-configured system directory", async (
   assert.equal(events.some((event) => event.k === "done"), true);
 });
 
-test("runMimoTurn reports a resolved configuration error before starting the session", async () => {
+test("runMimoTurn reports a resolved configuration error before starting the server", async () => {
   const { events, emitter } = collector();
-  let closed = false;
+  let started = false;
   const result = await runMimoTurn({
     prompt: "hello",
     emitter,
     abortController: new AbortController(),
-    mimoFactory: async () => ({
-      client: { config: { get: async () => ({ error: { data: { message: "config unavailable" } } }) } },
-      server: { close() { closed = true; } },
-    }),
+    mimoConfigReader: async () => { throw new Error("config unavailable"); },
+    mimoFactory: async () => { started = true; throw new Error("must not start"); },
   });
   assert.deepEqual(result, { sessionId: null });
-  assert.equal(closed, true);
+  assert.equal(started, false);
   assert.equal(events.some((event) => event.k === "error" && event.m === "config unavailable"), true);
 });
 
@@ -930,6 +920,25 @@ test("runMimoTurn surfaces a prompt error result and still tears down the server
   assert.equal(events.some((event) => event.k === "done"), false);
   assert.equal(abortCount, 1);
   assert.equal(closeCount >= 1, true);
+});
+
+test("runMimoTurn reports a prompt error even when the abort request never answers", async () => {
+  const { events, emitter } = collector();
+  let closed = false;
+  const stream = { async *[Symbol.asyncIterator]() { await new Promise(() => {}); } };
+  const client = {
+    global: { event: async () => ({ stream: connectedStream(stream) }) },
+    session: {
+      create: async () => ({ data: { id: "sess-1" } }),
+      promptAsync: async () => ({ error: { data: { message: "bad model" } } }),
+      abort: async () => new Promise(() => {}),
+    },
+  };
+  const running = runMimoTurn({ prompt: "hello", emitter, abortController: new AbortController(), mimoFactory: async () => ({ client, server: { close() { closed = true; } } }) });
+  const result = await Promise.race([running, new Promise((resolve) => setTimeout(() => resolve("timed-out"), 200))]);
+  assert.deepEqual(result, { sessionId: "sess-1" });
+  assert.equal(closed, true);
+  assert.equal(events.some((event) => event.k === "error" && event.m === "bad model"), true);
 });
 
 test("runMimoTurn rebrands shared OpenCode status strings to MiMo Code", async () => {

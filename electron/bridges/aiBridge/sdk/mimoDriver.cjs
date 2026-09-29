@@ -20,6 +20,7 @@
  */
 const fs = require("node:fs");
 const net = require("node:net");
+const path = require("node:path");
 const { randomBytes } = require("node:crypto");
 const { spawn, spawnSync } = require("node:child_process");
 const { prepareCommandForSpawn, resolveCliFromPath } = require("../../ai/shellUtils.cjs");
@@ -157,6 +158,83 @@ function getAvailablePort(host = "127.0.0.1") {
       });
     });
   });
+}
+
+// Ask the same CLI that starts the server to resolve its configuration. This
+// finishes before `serve`, so project skill roots can be checked and passed to
+// the first server instead of starting a second server for every turn.
+async function readMimoResolvedConfig({ cwd, env, binPath, signal }) {
+  const resolved = resolveUsableMimoBinPath(binPath, env) || resolveCliFromPath("mimo", env);
+  const spawnSpec = prepareCommandForSpawn(resolved || "mimo", ["debug", "config"], { unwrapNativeExe: false });
+  const childEnv = buildSdkAgentEnv({ shellEnv: env || process.env });
+  delete childEnv.MIMOCODE_CONFIG_CONTENT;
+  delete childEnv.MIMOCODE_PERMISSION;
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason instanceof Error ? signal.reason : new Error("aborted"));
+      return;
+    }
+    const child = spawn(spawnSpec.command, spawnSpec.args, {
+      cwd,
+      env: childEnv,
+      shell: spawnSpec.shell,
+      stdio: ["ignore", "pipe", "ignore"],
+      detached: process.platform !== "win32",
+      windowsHide: true,
+    });
+    let output = "";
+    let settled = false;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const onAbort = () => {
+      stopMimoProcess(child);
+      finish(signal.reason instanceof Error ? signal.reason : new Error("aborted"));
+    };
+    const timer = setTimeout(() => {
+      stopMimoProcess(child);
+      finish(new Error("MiMo Code configuration timed out"));
+    }, MIMO_SERVE_TIMEOUT_MS);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    child.stdout?.on("data", (chunk) => {
+      output += chunk.toString();
+      if (output.length > 2 * 1024 * 1024) {
+        stopMimoProcess(child);
+        finish(new Error("MiMo Code configuration is too large"));
+      }
+    });
+    child.on("error", (error) => finish(error));
+    child.on("close", (code) => {
+      if (code !== 0) {
+        finish(new Error(`MiMo Code configuration command exited with code ${code}`));
+        return;
+      }
+      try { finish(null, JSON.parse(output)); }
+      catch { finish(new Error("MiMo Code configuration is invalid")); }
+    });
+  });
+}
+
+async function readMimoSkillPaths({ cwd, env, binPath, signal }) {
+  const projectConfig = await readMimoResolvedConfig({ cwd: cwd || process.cwd(), env, binPath, signal });
+  const skillPaths = projectConfig?.skills?.paths;
+  if (!Array.isArray(skillPaths) || skillPaths.length === 0) return { project: skillPaths || [], global: [] };
+  if (filterMimoTrustedSkillPaths(skillPaths, { cwd, env: { ...process.env, ...env } }).length === skillPaths.length) {
+    return { project: skillPaths, global: [] };
+  }
+  const globalConfig = await readMimoResolvedConfig({
+    // MiMo rejects a filesystem root as a project directory. The installed
+    // application's executable directory is outside the user's project and
+    // exists on every supported platform.
+    cwd: path.dirname(process.execPath),
+    env, binPath, signal,
+  });
+  return { project: skillPaths, global: globalConfig?.skills?.paths };
 }
 
 /**
@@ -389,14 +467,10 @@ function createMiMoEmitter(emitter) {
 
 async function runMimoTurn({
   prompt, systemPrompt, attachments, cwd, model, injectedMcpServers, toolIntegrationMode,
-  skillsPathAllowlist, resumeSessionId, env, binPath, emitter, abortController, mimoFactory,
+  skillsPathAllowlist, resumeSessionId, env, binPath, emitter, abortController, mimoFactory, mimoConfigReader,
 }) {
   const emit = createMiMoEmitter(emitter);
   const nativeSkillOptions = { mimo: true, env: { ...process.env, ...env }, cwd };
-  const config = buildOpenCodeConfig({
-    model, injectedMcpServers, toolIntegrationMode, skillsPathAllowlist,
-    nativeSkillOptions,
-  });
   let instance = null;
   let iterator = null;
   let sessionId = resumeSessionId || null;
@@ -411,62 +485,32 @@ async function runMimoTurn({
 
   try {
     const factory = mimoFactory || ((options) => spawnMimoServer({ ...options, cwd, env, binPath }));
-    const port = await getAvailablePort();
-    instance = await factory({
-      config,
-      port,
-      signal: abortController?.signal,
+    const configReader = mimoConfigReader || (mimoFactory
+      ? async () => ({ project: [], global: [] })
+      : () => readMimoSkillPaths({ cwd, env, binPath, signal: abortController?.signal }));
+    const skillPaths = await configReader();
+    if (abortController?.signal?.aborted) return { sessionId };
+    const trustedPaths = filterMimoTrustedSkillPaths(skillPaths.project, {
+      cwd, env: nativeSkillOptions.env, globalSkillPaths: skillPaths.global,
     });
-    // MiMo can discover additional roots from its resolved `skills.paths`.
-    // Read that resolved config before the turn, then restart only when it
-    // names custom roots so our permission map can include those exact paths.
-    if (typeof instance.client?.config?.get === "function") {
-      const resolved = await awaitMimoSetup(
-        instance.client.config.get({ query: directoryQuery }),
-        abortController?.signal,
-        instance.server,
-      );
-      if (abortController?.signal?.aborted) return { sessionId };
-      if (resolved?.error) throw resolved.error;
-      if (!resolved) throw new Error("MiMo Code configuration unavailable");
-      const skillPaths = resolved?.data?.skills?.paths || resolved?.skills?.paths;
-      if (Array.isArray(skillPaths) && skillPaths.length > 0) {
-        let trustedPaths = filterMimoTrustedSkillPaths(skillPaths, { cwd, env: nativeSkillOptions.env });
-        if (trustedPaths.length < skillPaths.length && typeof instance.server?.getGlobalConfig === "function") {
-          let globalConfig;
-          try {
-            globalConfig = await awaitMimoSetup(
-              instance.server.getGlobalConfig(abortController?.signal),
-              abortController?.signal,
-              instance.server,
-            );
-          } catch {}
-          if (abortController?.signal?.aborted) return { sessionId };
-          trustedPaths = filterMimoTrustedSkillPaths(skillPaths, {
-            cwd, env: nativeSkillOptions.env,
-            globalSkillPaths: globalConfig?.skills?.paths,
-          });
-        }
-        if (trustedPaths.length > 0) {
-          const customConfig = buildOpenCodeConfig({
-            model, injectedMcpServers, toolIntegrationMode, skillsPathAllowlist,
-            nativeSkillOptions: { ...nativeSkillOptions, skillPaths: trustedPaths },
-          });
-          instance.server?.close?.();
-          instance = await factory({
-            config: customConfig,
-            port: await getAvailablePort(),
-            signal: abortController?.signal,
-          });
-        }
-      }
+    const config = buildOpenCodeConfig({
+      model, injectedMcpServers, toolIntegrationMode, skillsPathAllowlist,
+      nativeSkillOptions: { ...nativeSkillOptions, skillPaths: trustedPaths },
+    });
+    if (skillPaths.project.length > 0) {
+      // The skill loader reads SKILL.md before tool permissions apply. Limit
+      // discovery at startup, including when every custom path was rejected.
+      config.skills = { paths: trustedPaths };
     }
+    instance = await factory({ config, port: await getAvailablePort(), signal: abortController?.signal });
     const { client } = instance;
     const abortMimo = async () => {
       if (abortSent) return;
       abortSent = true;
       if (sessionId) {
-        try { await client.session.abort({ path: { id: sessionId }, query: directoryQuery }); } catch {}
+        try {
+          void Promise.resolve(client.session.abort({ path: { id: sessionId }, query: directoryQuery })).catch(() => {});
+        } catch {}
       }
       try { instance?.server?.close?.(); } catch {}
     };
@@ -659,15 +703,26 @@ function emptyMimoModelCatalog() {
  * The OpenCode driver keeps a pooled server because catalog loads are frequent;
  * MiMo Code has no such traffic yet, so spawning per call keeps this simple.
  */
-async function listMimoModels({ env, binPath, cwd, mimoFactory, abortController, signal } = {}) {
+async function listMimoModels({ env, binPath, cwd, mimoFactory, mimoConfigReader, abortController, signal } = {}) {
   const effectiveSignal = signal || abortController?.signal;
   if (effectiveSignal?.aborted) return emptyMimoModelCatalog();
   let instance = null;
   try {
     const factory = mimoFactory || ((options) => spawnMimoServer({ ...options, cwd, env, binPath }));
+    const configReader = mimoConfigReader || (mimoFactory
+      ? async () => ({ project: [], global: [] })
+      : () => readMimoSkillPaths({ cwd, env, binPath, signal: effectiveSignal }));
+    const skillPaths = await configReader();
+    if (effectiveSignal?.aborted) return emptyMimoModelCatalog();
+    const trustedPaths = filterMimoTrustedSkillPaths(skillPaths.project, {
+      cwd, env: { ...process.env, ...env }, globalSkillPaths: skillPaths.global,
+    });
     const port = await getAvailablePort();
     instance = await factory({
-      config: { autoupdate: false },
+      config: {
+        autoupdate: false,
+        ...(skillPaths.project.length > 0 ? { skills: { paths: trustedPaths } } : {}),
+      },
       port,
       signal: effectiveSignal,
     });
@@ -690,6 +745,7 @@ async function listMimoModels({ env, binPath, cwd, mimoFactory, abortController,
 
 module.exports = {
   listMimoModels,
+  readMimoSkillPaths,
   resolveUsableMimoBinPath,
   runMimoTurn,
   spawnMimoServer,
