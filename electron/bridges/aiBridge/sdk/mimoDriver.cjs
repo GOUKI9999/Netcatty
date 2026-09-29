@@ -363,6 +363,21 @@ async function spawnMimoServer({
     }),
     server: {
       url, close, exited,
+      async replyPermission(eventType, request, approved, signal) {
+        const legacy = eventType === "permission.updated";
+        const route = legacy
+          ? `/session/${encodeURIComponent(request.sessionID)}/permissions/${encodeURIComponent(request.id)}`
+          : `/permission/${encodeURIComponent(request.id)}/reply`;
+        const response = await fetch(`${url}${route}`, {
+          method: "POST",
+          headers: { Authorization: authorization, "Content-Type": "application/json" },
+          body: JSON.stringify(legacy
+            ? { response: approved ? "once" : "reject" }
+            : { reply: approved ? "once" : "reject" }),
+          signal,
+        });
+        if (!response.ok) throw new Error(`MiMo Code permission reply failed (${response.status})`);
+      },
       async getGlobalConfig(signal) {
         const response = await fetch(`${url}/global/config`, { headers: { Authorization: authorization }, signal });
         if (!response.ok) throw new Error(`MiMo Code global configuration unavailable (${response.status})`);
@@ -467,7 +482,8 @@ function createMiMoEmitter(emitter) {
 
 async function runMimoTurn({
   prompt, systemPrompt, attachments, cwd, model, injectedMcpServers, toolIntegrationMode,
-  skillsPathAllowlist, resumeSessionId, env, binPath, emitter, abortController, mimoFactory, mimoConfigReader,
+  skillsPathAllowlist, permissionMode = "confirm", chatSessionId, requestApprovalFromRenderer,
+  resumeSessionId, env, binPath, emitter, abortController, mimoFactory, mimoConfigReader,
 }) {
   const emit = createMiMoEmitter(emitter);
   const nativeSkillOptions = { mimo: true, env: { ...process.env, ...env }, cwd };
@@ -497,6 +513,12 @@ async function runMimoTurn({
       model, injectedMcpServers, toolIntegrationMode, skillsPathAllowlist,
       nativeSkillOptions: { ...nativeSkillOptions, skillPaths: trustedPaths },
     });
+    // The shared OpenCode builder permits bash in Skills mode. MiMo runs that
+    // command directly, so the selected Netcatty mode must gate it here.
+    if (toolIntegrationMode === "skills") {
+      config.permission.bash = permissionMode === "auto" ? "allow"
+        : permissionMode === "observer" ? "deny" : "ask";
+    }
     if (skillPaths.project.length > 0) {
       // The skill loader reads SKILL.md before tool permissions apply. Limit
       // discovery at startup, including when every custom path was rejected.
@@ -552,6 +574,7 @@ async function runMimoTurn({
 
     const stopEventLoopWait = createStopWait();
     const serverExitWait = createMimoExitWait(instance.server);
+    const answeredPermissions = new Set();
     const eventLoop = (async () => {
       const abortWait = createAbortWait(abortController?.signal);
       try {
@@ -582,6 +605,40 @@ async function runMimoTurn({
             continue;
           }
           const payload = event?.payload || event;
+          if (payload?.type === "permission.updated" || payload?.type === "permission.asked") {
+            const request = payload.properties;
+            if (!request?.id || !instance.server?.replyPermission) {
+              throw new Error("MiMo Code permission request could not be answered");
+            }
+            if (answeredPermissions.has(request.id)) {
+              nextEvent = iterator.next();
+              continue;
+            }
+            answeredPermissions.add(request.id);
+            const approval = permissionMode === "confirm" && typeof requestApprovalFromRenderer === "function"
+              ? Promise.resolve().then(() => requestApprovalFromRenderer("MiMo Code permission", {
+                permission: request.permission || request.type,
+                patterns: request.patterns || request.pattern,
+                title: request.title,
+                metadata: request.metadata,
+              }, chatSessionId)).then(Boolean, () => false)
+              : Promise.resolve(false);
+            const decision = await Promise.race([
+              approval.then((approved) => ({ type: "decision", approved })),
+              abortWait.promise.then(() => ({ type: "abort" })),
+              serverExitWait,
+            ]);
+            if (decision.type === "abort") break;
+            if (decision.type === "exit") throw new Error("MiMo Code service exited during approval");
+            await Promise.race([
+              instance.server.replyPermission(payload.type, request, decision.approved, abortController?.signal),
+              abortWait.promise.then(() => ({ type: "abort" })),
+              serverExitWait,
+            ]);
+            if (abortController?.signal?.aborted) break;
+            nextEvent = iterator.next();
+            continue;
+          }
           // A resumed session can announce the previous turn's idle state
           // before this prompt produces any event. Wait for this turn's busy
           // state or content before accepting an idle as completion.

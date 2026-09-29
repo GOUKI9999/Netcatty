@@ -147,6 +147,24 @@ test("spawnMimoServer launches `mimo serve` with hostname/port argv and passes M
     assert.equal(instance.url, "http://127.0.0.1:5123");
     assert.equal(instance.server.url, "http://127.0.0.1:5123");
     assert.equal(typeof instance.client, "object");
+    const originalFetch = global.fetch;
+    const replies = [];
+    global.fetch = async (url, options) => {
+      replies.push({ url, options });
+      return { ok: true };
+    };
+    try {
+      await instance.server.replyPermission("permission.updated", { id: "per_1", sessionID: "ses_1" }, true);
+      await instance.server.replyPermission("permission.asked", { id: "per_2", sessionID: "ses_1" }, false);
+    } finally {
+      global.fetch = originalFetch;
+    }
+    assert.deepEqual(replies.map(({ url, options }) => [url, JSON.parse(options.body)]), [
+      ["http://127.0.0.1:5123/session/ses_1/permissions/per_1", { response: "once" }],
+      ["http://127.0.0.1:5123/permission/per_2/reply", { reply: "reject" }],
+    ]);
+    assert.equal(replies[0].options.headers.Authorization,
+      `Basic ${Buffer.from(`netcatty:${options.env.MIMOCODE_SERVER_PASSWORD}`).toString("base64")}`);
 
     // server.close() must tear down the spawned handle (no orphan).
     instance.server.close();
@@ -549,6 +567,106 @@ test("runMimoTurn allows configured custom skill paths before sending a prompt",
   assert.deepEqual(result, { sessionId: "sess-1" });
   assert.equal(calls.length, 1);
   assert.equal(events.some((event) => event.k === "done"), true);
+});
+
+test("runMimoTurn gates MiMo commands by the selected permission mode", async () => {
+  for (const [permissionMode, expected] of [["observer", "deny"], ["confirm", "ask"], ["auto", "allow"]]) {
+    const { emitter } = collector();
+    let actual;
+    const stream = {
+      async *[Symbol.asyncIterator]() {
+        yield { payload: { type: "message.part.updated", properties: { part: { type: "text", sessionID: "sess-1", id: "p1", text: "ok" }, delta: "ok" } } };
+        yield { payload: { type: "session.idle", properties: { sessionID: "sess-1" } } };
+      },
+    };
+    await runMimoTurn({
+      prompt: "hello",
+      toolIntegrationMode: "skills",
+      permissionMode,
+      emitter,
+      abortController: new AbortController(),
+      mimoFactory: async ({ config }) => {
+        actual = config.permission.bash;
+        return {
+          client: {
+            global: { event: async () => ({ stream: connectedStream(stream) }) },
+            session: { create: async () => ({ data: { id: "sess-1" } }), promptAsync: async () => ({ data: true }) },
+          },
+          server: { close() {} },
+        };
+      },
+    });
+    assert.equal(actual, expected, permissionMode);
+  }
+});
+
+test("runMimoTurn answers MiMo native permission requests through Netcatty approval", async () => {
+  const { events, emitter } = collector();
+  const approvals = [];
+  const replies = [];
+  const stream = {
+    async *[Symbol.asyncIterator]() {
+      yield { payload: { type: "permission.updated", properties: {
+        id: "per_1", sessionID: "sess-1", type: "bash", title: "Run command", pattern: "echo ok",
+        metadata: { command: "echo ok" },
+      } } };
+      yield { payload: { type: "message.part.updated", properties: { part: { type: "text", sessionID: "sess-1", id: "p1", text: "ok" }, delta: "ok" } } };
+      yield { payload: { type: "session.idle", properties: { sessionID: "sess-1" } } };
+    },
+  };
+  const result = await runMimoTurn({
+    prompt: "hello",
+    toolIntegrationMode: "skills",
+    permissionMode: "confirm",
+    chatSessionId: "chat-1",
+    requestApprovalFromRenderer: async (...args) => { approvals.push(args); return true; },
+    emitter,
+    abortController: new AbortController(),
+    mimoFactory: async () => ({
+      client: {
+        global: { event: async () => ({ stream: connectedStream(stream) }) },
+        session: { create: async () => ({ data: { id: "sess-1" } }), promptAsync: async () => ({ data: true }) },
+      },
+      server: { close() {}, replyPermission: async (...args) => { replies.push(args); } },
+    }),
+  });
+  assert.deepEqual(result, { sessionId: "sess-1" });
+  assert.equal(approvals.length, 1);
+  assert.equal(approvals[0][0], "MiMo Code permission");
+  assert.equal(approvals[0][1].metadata.command, "echo ok");
+  assert.equal(approvals[0][2], "chat-1");
+  assert.deepEqual(replies.map(([type, request, approved]) => [type, request.id, approved]), [["permission.updated", "per_1", true]]);
+  assert.equal(events.some((event) => event.k === "done"), true);
+});
+
+test("runMimoTurn rejects an unexpected MiMo permission request in observer mode", async () => {
+  const { emitter } = collector();
+  const replies = [];
+  const stream = {
+    async *[Symbol.asyncIterator]() {
+      yield { payload: { type: "permission.asked", properties: {
+        id: "per_2", sessionID: "sess-1", permission: "bash", patterns: ["echo ok"], metadata: {},
+      } } };
+      yield { payload: { type: "message.part.updated", properties: { part: { type: "text", sessionID: "sess-1", id: "p1", text: "ok" }, delta: "ok" } } };
+      yield { payload: { type: "session.idle", properties: { sessionID: "sess-1" } } };
+    },
+  };
+  await runMimoTurn({
+    prompt: "hello",
+    toolIntegrationMode: "skills",
+    permissionMode: "observer",
+    requestApprovalFromRenderer: () => { throw new Error("observer must not ask"); },
+    emitter,
+    abortController: new AbortController(),
+    mimoFactory: async () => ({
+      client: {
+        global: { event: async () => ({ stream: connectedStream(stream) }) },
+        session: { create: async () => ({ data: { id: "sess-1" } }), promptAsync: async () => ({ data: true }) },
+      },
+      server: { close() {}, replyPermission: async (...args) => { replies.push(args); } },
+    }),
+  });
+  assert.deepEqual(replies.map(([type, request, approved]) => [type, request.id, approved]), [["permission.asked", "per_2", false]]);
 });
 
 test("runMimoTurn does not grant a project-configured system directory", async () => {
