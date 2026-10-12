@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { normalizeStoredAgentModelSelection, shouldUseStoredAgentModel } from '../../components/AIChatSidePanelHelpers';
 import assert from 'node:assert/strict';
 
 import {
@@ -19,7 +20,7 @@ import {
 } from './types';
 
 test('Claude presets advertise effort levels separately from the model id', () => {
-  assert.equal(CLAUDE_MODEL_PRESETS.length, 13);
+  assert.equal(CLAUDE_MODEL_PRESETS.length, 15);
   const withLevels = CLAUDE_MODEL_PRESETS.filter((preset) => preset.thinkingLevels);
   assert.ok(withLevels.length > 0);
   for (const preset of withLevels) {
@@ -263,4 +264,13 @@ test('getAgentModelPresets resolves Windows command paths with backslashes', () 
     getAgentModelPresets('C\\Program Files\\nodejs\\claude.exe'),
     CLAUDE_MODEL_PRESETS,
   );
+});
+
+test('Claude fallback preserves saved family aliases and effort', () => {
+  for (const selection of ['sonnet/medium', 'haiku/low']) {
+    assert.equal(shouldUseStoredAgentModel(selection, CLAUDE_MODEL_PRESETS), true);
+    assert.equal(normalizeStoredAgentModelSelection(selection, CLAUDE_MODEL_PRESETS), selection);
+  }
+  assert.equal(CLAUDE_MODEL_PRESETS.find((preset) => preset.id === 'sonnet')?.name, 'Sonnet');
+  assert.equal(CLAUDE_MODEL_PRESETS.find((preset) => preset.id === 'haiku')?.name, 'Haiku');
 });
