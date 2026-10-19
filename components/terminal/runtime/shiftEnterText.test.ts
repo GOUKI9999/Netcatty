@@ -26,8 +26,8 @@ const keyEvent = (overrides: Partial<KeyboardEvent> = {}) => ({
   ...overrides,
 }) as KeyboardEvent;
 
-test("shift enter text defaults to newline", () => {
-  assert.equal(resolveShiftEnterText(), "\n");
+test("shift enter text defaults to the legacy Alt+Enter encoding (ESC + CR)", () => {
+  assert.equal(resolveShiftEnterText(), "\u001b\r");
 });
 
 test("shift enter text decodes newline, tab, carriage return, and backslash escapes", () => {

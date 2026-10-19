@@ -1,6 +1,6 @@
 import type { TerminalSettings } from "../../../domain/models";
 
-export const DEFAULT_SHIFT_ENTER_TEXT = "\\n";
+export const DEFAULT_SHIFT_ENTER_TEXT = "\\e\\r";
 
 /** Kitty CSI-u encoding for Shift+Enter (keycode 13, modifier shift → 2). */
 export const SHIFT_ENTER_CSI_U_SEQUENCE = "\u001b[13;2u";
