@@ -2,6 +2,7 @@ type TerminalReconnectHandler = () => void;
 
 export const createTerminalReconnectRegistry = () => {
   const handlers = new Map<string, TerminalReconnectHandler>();
+  const eligibility = new Map<string, () => boolean>();
   const pendingRequests = new Set<string>();
   const activeSessionIds = new Set<string>();
   const enterReconnectEnabledIds = new Set<string>();
@@ -28,17 +29,27 @@ export const createTerminalReconnectRegistry = () => {
     return () => listeners.delete(listener);
   };
 
-  const register = (sessionId: string, handler: TerminalReconnectHandler): (() => void) => {
+  const register = (sessionId: string, handler: TerminalReconnectHandler, canReconnect: () => boolean = () => false): (() => void) => {
     handlers.set(sessionId, handler);
+    eligibility.set(sessionId, canReconnect);
     if (pendingRequests.delete(sessionId)) {
       handler();
     }
     return () => {
       if (handlers.get(sessionId) === handler) {
         handlers.delete(sessionId);
+        eligibility.delete(sessionId);
         setActive(sessionId, false);
       }
     };
+  };
+
+  // Agent requests must never survive unmount or bypass authentication/auto-retry.
+  const requestIfAvailable = (sessionId: string): boolean => {
+    const handler = handlers.get(sessionId);
+    if (!handler || isActive(sessionId) || !eligibility.get(sessionId)?.()) return false;
+    handler();
+    return true;
   };
 
   const request = (sessionId: string): boolean => {
@@ -67,6 +78,7 @@ export const createTerminalReconnectRegistry = () => {
   return {
     register,
     request,
+    requestIfAvailable,
     requestEnterReconnect,
     setEnterReconnectEnabled,
     setActive,

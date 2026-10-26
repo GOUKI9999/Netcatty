@@ -140,6 +140,26 @@ const META_CAPABILITIES = [
     },
   },
   {
+    id: "session.reconnect",
+    domain: "session",
+    status: CAPABILITY_STATUS.IMPLEMENTED,
+    description: "Request reconnect of a disconnected session in the current scope, preserving its tab and workspace. Does not restart connected sessions or replay commands. Returns acknowledgement, not shell readiness. Recovery is limited to three attempts with 2/5 second backoff in a 120 second incident; inspect authentication or exhausted recovery instead of retrying indefinitely.",
+    policy: {
+      write: true,
+      sensitiveRead: false,
+      longRunning: false,
+      requiresChatSession: true,
+      bypassesObserverBlock: false,
+      bypassesApproval: false,
+      bypassesChatCancel: false,
+    },
+    surfaces: {
+      global: { rpcMethod: "session/reconnect" },
+      public: { rpcMethod: "public/session/reconnect", mcpTool: "session_reconnect" },
+      cli: { command: ["session-reconnect"] },
+    },
+  },
+  {
     id: "session.close",
     domain: "session",
     status: CAPABILITY_STATUS.IMPLEMENTED,

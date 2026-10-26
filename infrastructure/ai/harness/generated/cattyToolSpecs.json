@@ -62,6 +62,29 @@
     }
   },
   {
+    "capabilityId": "session.reconnect",
+    "toolName": "session_reconnect",
+    "rpcMethod": "session/reconnect",
+    "localExecution": false,
+    "description": "Request reconnect of a disconnected session in the current scope, preserving its tab and workspace. Does not restart connected sessions or replay commands. Returns acknowledgement, not shell readiness. Recovery is limited to three attempts with 2/5 second backoff in a 120 second incident; inspect authentication or exhausted recovery instead of retrying indefinitely.",
+    "inputShape": {
+      "sessionId": {
+        "type": "string",
+        "optional": false,
+        "description": "An existing disconnected terminal session ID in the current granted scope."
+      }
+    },
+    "policy": {
+      "write": true,
+      "sensitiveRead": false,
+      "longRunning": false,
+      "requiresChatSession": true,
+      "bypassesObserverBlock": false,
+      "bypassesApproval": false,
+      "bypassesChatCancel": false
+    }
+  },
+  {
     "capabilityId": "session.close",
     "toolName": "session_close",
     "rpcMethod": "session/close",

@@ -4123,11 +4123,17 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     startReconnect("manual");
   };
   manualReconnectRequestRef.current = handleRetry;
+  const canAgentReconnectRef = useRef<() => boolean>(() => false);
+  canAgentReconnectRef.current = () => statusRef.current === 'disconnected'
+    && !auth.needsAuth && !needsHostKeyVerification && !isConnectionAwaitingUserInput
+    && !autoReconnectLoopActiveRef.current && !reconnectWakeInFlightRef.current
+    && reconnectPreparationTokenRef.current === null;
   useEffect(() => {
     if (attachExistingSession) return undefined;
     return terminalReconnectRegistry.register(
       sessionId,
       () => manualReconnectRequestRef.current(),
+      () => canAgentReconnectRef.current(),
     );
   }, [attachExistingSession, sessionId]);
 

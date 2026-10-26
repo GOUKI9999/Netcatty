@@ -3,6 +3,26 @@ import test from 'node:test';
 
 import { createTerminalReconnectRegistry } from './terminalReconnectRegistry';
 
+test('agent reconnect never queues an unmounted terminal', () => {
+  const registry = createTerminalReconnectRegistry();
+  assert.equal(registry.requestIfAvailable('missing'), false);
+  let calls = 0;
+  registry.register('missing', () => { calls++; });
+  assert.equal(calls, 0);
+});
+
+test('agent reconnect respects live eligibility and active reconnects', () => {
+  const registry = createTerminalReconnectRegistry();
+  let eligible = false;
+  let calls = 0;
+  registry.register('s', () => { calls++; registry.setActive('s', true); }, () => eligible);
+  assert.equal(registry.requestIfAvailable('s'), false);
+  eligible = true;
+  assert.equal(registry.requestIfAvailable('s'), true);
+  assert.equal(registry.requestIfAvailable('s'), false);
+  assert.equal(calls, 1);
+});
+
 test('a registered terminal session can be reconnected on request', () => {
   const registry = createTerminalReconnectRegistry();
   const requestedSessionIds: string[] = [];

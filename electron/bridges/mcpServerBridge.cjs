@@ -802,6 +802,7 @@ function updateLiveSessionMetadata(sessionList) {
   const next = new Map();
   for (const entry of incoming) {
     if (!entry || typeof entry !== "object" || !entry.sessionId) continue;
+    if (entry.connected === true) sessionService?.forgetReconnect(entry.sessionId);
     next.set(entry.sessionId, {
       hostname: entry.hostname || "",
       label: entry.label || "",
@@ -1269,6 +1270,7 @@ function ensureOpenedSessionMetadata(chatSessionId, sessionId, result) {
  */
 function forgetClosedTerminalSession(sessionId) {
   if (!sessionId) return;
+  sessionService?.forgetReconnect(sessionId);
   terminalSessionCloseRevision += 1;
   closedTerminalSessionRevisions.delete(sessionId);
   closedTerminalSessionRevisions.set(sessionId, terminalSessionCloseRevision);
@@ -1605,6 +1607,13 @@ function reportOpenedSessionActivity(event = {}) {
 }
 
 sessionService = createSessionService({
+  validateReconnect: (params = {}) => {
+    const scopeErr = validateSessionScope(params.sessionId, params.chatSessionId, params.scopedSessionIds);
+    if (scopeErr) return { ok: false, error: scopeErr };
+    if (isChatSessionCancelled(params.chatSessionId)) return { ok: false, error: "Chat session is cancelled." };
+    if (sessionIdleManager.isClosing(params.sessionId)) return { ok: false, error: "Session is closing." };
+    return { ok: true };
+  },
   invokeSessionAgent: (...args) => {
     if (typeof invokeVaultAgentFn !== "function") {
       return Promise.resolve({ ok: false, error: "Vault agent bridge is unavailable." });

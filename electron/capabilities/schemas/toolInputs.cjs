@@ -21,6 +21,9 @@ const TOOL_INPUT_FIELDS = Object.freeze({
     jobId: { type: "string", description: "The background job ID returned by terminal_start." },
   },
   "session.environment": {},
+  "session.reconnect": {
+    sessionId: { type: "string", description: "An existing disconnected terminal session ID in the current granted scope." },
+  },
   "session.close": {
     sessionId: { type: "string", description: "The session ID returned by host_open." },
   },
