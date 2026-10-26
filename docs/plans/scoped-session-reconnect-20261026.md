@@ -17,7 +17,7 @@ Continue the workspace session continuity objective after merged PR #3885. Expos
 - Tests: first seven new cases failed before implementation; 314 focused regressions now pass, including real MCP transport startup, root bridge scope/cancellation, permission dispatch, renderer lifecycle gates and existing terminal view regressions. CLI adapter suite: 16/16 pass after the additional required-session case. Targeted ESLint passes.
 - Implementation: complete. Catalog/generated tools, CLI, progressive MCP `sessions` category, scoped main-process service and renderer reconnect handler are connected. Lost replies consume budget; explicit non-dispatch replies do not. Live connected snapshots and explicit tab closure clear incident state.
 - Build: `npm run build` passed; final rebuild after the Vault queue bypass also passed (1m 46s, existing large-chunk warnings). Additional final renderer bridge suite: 92/92 passed; targeted lint passed again.
-- Submission: ready for a follow-up PR on `feat/scoped-session-reconnect-20261026`.
+- Submission: [PR #3935](https://github.com/binaricat/Netcatty/pull/3935), branch `feat/scoped-session-reconnect-20261026`. Local validation complete; upstream CI/review pending.
 
 ## Findings and limits
 
