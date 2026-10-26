@@ -48,11 +48,13 @@ The Skill is operator guidance, not a backend retry controller or a grant of per
 
 ## Follow-up: explicit reconnect (2026-10-26)
 
-Implementation and validation are tracked in [scoped-session-reconnect-20261026.md](scoped-session-reconnect-20261026.md). The follow-up adds `session_reconnect` / CLI `session-reconnect` for existing scoped disconnected sessions, using the existing terminal lifecycle with no new tab or command replay. Main-process attempt limits and scope checks supplement the operator policy. Restart/move and automated recovery orchestration remain later work.
+Implementation and validation are tracked in [scoped-session-reconnect-20261026.md](scoped-session-reconnect-20261026.md). The follow-up adds `session_reconnect` / CLI `session-reconnect` for existing scoped disconnected sessions, using the existing terminal lifecycle with no new tab or command replay. Main-process attempt limits and scope checks supplement the operator policy. Restart/move and independent recovery-tab orchestration remain later work.
+
+The same open PR is being extended with `session_recover` / CLI `session-recover`: short bounded recovery calls inspect authentication, existing reconnects and tracked job activity, retry with the shared reconnect budget, and observe prompt readiness. Continuations retain the incident deadline. This orchestration does not create recovery tabs, move sessions, restart connected transports or replay task commands. Actual sleep/wake/network-fault acceptance remains outstanding.
 
 ## Status
 
-PR 3885 is merged. The follow-up implements explicit scoped disconnected-session reconnect; restart/move remain planned. Apply Skill updates through the application's normal distribution/synchronization path; do not rely on overwriting a user's separately maintained interruption skill.
+PR 3885 is merged. The follow-up implements explicit scoped reconnect and bounded same-session recovery; restart/move remain planned. Apply Skill updates through the application's normal distribution/synchronization path; do not rely on overwriting a user's separately maintained interruption skill.
 
 ## Guidance validation
 

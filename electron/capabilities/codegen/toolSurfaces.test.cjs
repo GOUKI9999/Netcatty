@@ -125,6 +125,10 @@ test('session reconnect is exposed to both agents without cleanup permission byp
   assert.equal(mcp?.policy.bypassesApproval, false);
   assert.equal(mcp?.policy.bypassesObserverBlock, false);
   assert.equal(mcp?.policy.bypassesChatCancel, false);
+  const recover = listCattyToolSpecs().find(tool => tool.toolName === 'session_recover');
+  assert.equal(recover?.rpcMethod, 'session/recover');
+  const recoverMcp = listMcpTools().find(tool => tool.mcpTool === 'session_recover');
+  assert.equal(recoverMcp?.policy.bypassesApproval, false);
 });
 
 test("host_open tells agents to close sessions after use", () => {

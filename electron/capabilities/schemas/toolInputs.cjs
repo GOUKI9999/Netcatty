@@ -24,6 +24,9 @@ const TOOL_INPUT_FIELDS = Object.freeze({
   "session.reconnect": {
     sessionId: { type: "string", description: "An existing disconnected terminal session ID in the current granted scope." },
   },
+  "session.recover": {
+    sessionId: { type: "string", description: "The existing terminal session ID in the current granted scope. Recovery preserves this session and never replays commands." },
+  },
   "session.close": {
     sessionId: { type: "string", description: "The session ID returned by host_open." },
   },

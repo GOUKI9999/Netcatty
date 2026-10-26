@@ -36,3 +36,13 @@ Continue the workspace session continuity objective after merged PR #3885. Expos
 - Retry exhaustion is retained across chat turns; no session/tab storm.
 
 Restarting a connected/hung transport, moving sessions and remote process termination remain later increments. A reconnect does not prove an old process has stopped.
+
+## Follow-up: bounded recovery orchestration
+
+Goal: inspect the existing terminal, retry transient disconnects with the existing shared reconnect budget, and observe connection/prompt readiness without sending task commands. Extend the still-open PR #3935, based on unchanged upstream `0256e7471` (fetched again before this increment).
+
+Plan: write lifecycle tests, implement a short bounded recovery operation, expose actual authentication/reconnecting state from the terminal registry, connect scope/cancel/readiness checks, then run regressions/lint/build and update the PR. Each call waits at most 20 seconds with short renderer deadlines; continuation calls share a 120-second incident window. Stop on authentication, missing handler, busy tracked jobs, cancellation, lost scope or retry exhaustion. Never open/close tabs or replay commands in this increment.
+
+Status: implementation complete; 438 focused regressions and targeted ESLint pass. New missing-service, expiry, stopped-terminal and flapping-budget cases failed before their fixes. Final `npm run build` after budget hardening passed (1m 6s, existing chunk-size warnings). Existing reconnect CI passed before this extension, which needs fresh CI. Live network fault injection remains pending.
+
+Findings: reusing only the low-level reconnect budget was insufficient when a flapping transport briefly connected and cleared that budget. The recovery operation now retains its own three-attempt count and 2/5 second backoff until a ready prompt is observed; calls still honor the shared single-reconnect budget. No timer survives a completed recovery call. Explicit user Disconnect/Cancel and authentication failure stop automatic recovery. Private reconnect dispatch carries a renderer expiry deadline to prevent late execution after timeout.

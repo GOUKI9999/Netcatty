@@ -3,6 +3,17 @@ import test from 'node:test';
 
 import { createTerminalReconnectRegistry } from './terminalReconnectRegistry';
 
+test('recovery snapshots use the current handler and disappear on unmount', () => {
+  const registry = createTerminalReconnectRegistry();
+  assert.equal(registry.inspect('s'), null);
+  const unregister = registry.register('s', () => {}, () => false,
+    () => ({ status: 'disconnected', waitingForInput: true, reconnecting: false }));
+  assert.equal(registry.inspect('s')?.waitingForInput, true);
+  assert.equal(registry.inspect('s')?.reconnectAllowed, false);
+  unregister();
+  assert.equal(registry.inspect('s'), null);
+});
+
 test('agent reconnect never queues an unmounted terminal', () => {
   const registry = createTerminalReconnectRegistry();
   assert.equal(registry.requestIfAvailable('missing'), false);

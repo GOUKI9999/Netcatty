@@ -1,8 +1,10 @@
 type TerminalReconnectHandler = () => void;
+export type TerminalRecoverySnapshot = { status: string; waitingForInput: boolean; reconnecting: boolean; stopped?: boolean };
 
 export const createTerminalReconnectRegistry = () => {
   const handlers = new Map<string, TerminalReconnectHandler>();
   const eligibility = new Map<string, () => boolean>();
+  const recoveryReaders = new Map<string, () => TerminalRecoverySnapshot>();
   const pendingRequests = new Set<string>();
   const activeSessionIds = new Set<string>();
   const enterReconnectEnabledIds = new Set<string>();
@@ -29,9 +31,12 @@ export const createTerminalReconnectRegistry = () => {
     return () => listeners.delete(listener);
   };
 
-  const register = (sessionId: string, handler: TerminalReconnectHandler, canReconnect: () => boolean = () => false): (() => void) => {
+  const register = (sessionId: string, handler: TerminalReconnectHandler,
+    canReconnect: () => boolean = () => false, readRecovery?: () => TerminalRecoverySnapshot): (() => void) => {
     handlers.set(sessionId, handler);
     eligibility.set(sessionId, canReconnect);
+    if (readRecovery) recoveryReaders.set(sessionId, readRecovery);
+    else recoveryReaders.delete(sessionId);
     if (pendingRequests.delete(sessionId)) {
       handler();
     }
@@ -39,9 +44,17 @@ export const createTerminalReconnectRegistry = () => {
       if (handlers.get(sessionId) === handler) {
         handlers.delete(sessionId);
         eligibility.delete(sessionId);
+        recoveryReaders.delete(sessionId);
         setActive(sessionId, false);
       }
     };
+  };
+
+  const inspect = (sessionId: string) => {
+    const state = recoveryReaders.get(sessionId)?.();
+    if (!state) return null;
+    return { ...state, reconnecting: state.reconnecting || isActive(sessionId),
+      reconnectAllowed: !isActive(sessionId) && Boolean(eligibility.get(sessionId)?.()) };
   };
 
   // Agent requests must never survive unmount or bypass authentication/auto-retry.
@@ -77,6 +90,7 @@ export const createTerminalReconnectRegistry = () => {
 
   return {
     register,
+    inspect,
     request,
     requestIfAvailable,
     requestEnterReconnect,

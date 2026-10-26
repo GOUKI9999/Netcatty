@@ -4,6 +4,20 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createSessionService } = require("./sessionService.cjs");
 
+test('automatic recovery shares the single-reconnect budget and stops after three failed connections', async () => {
+  let time = 0;
+  let attempts = 0;
+  const service = createSessionService({ now: () => time, sleep: async ms => { time += ms; },
+    validateReconnect: () => ({ ok: true }),
+    inspectRecovery: async () => ({ ok: true, status: 'disconnected', reconnectAllowed: true }),
+    invokeSessionAgent: async () => { attempts++; return { ok: true, started: true }; } });
+  const result = await service.recover({ sessionId: 'failed' });
+  assert.equal(result.code, 'RECONNECT_LIMIT');
+  assert.equal(attempts, 3);
+  assert.ok(time >= 7000 && time < 20000);
+  assert.equal((await service.reconnect({ sessionId: 'failed', chatSessionId: 'another' })).code, 'RECONNECT_LIMIT');
+});
+
 test("reconnect fails closed without scoped authorization", async () => {
   let calls = 0;
   const service = createSessionService({ invokeSessionAgent: async () => { calls++; } });

@@ -28,6 +28,7 @@ const CORE_MCP_TOOL_NAMES = Object.freeze([
 const DEFERRED_MCP_TOOLSETS = Object.freeze({
   sessions: Object.freeze([
     "session_reconnect",
+    "session_recover",
   ]),
   attachments: Object.freeze([
     "list_attachments",

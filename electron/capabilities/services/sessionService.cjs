@@ -1,10 +1,13 @@
 "use strict";
+const { createSessionRecoveryService } = require("./sessionRecoveryService.cjs");
 
 function createSessionService(ctx = {}) {
   const { invokeSessionAgent, validateClose, beforeClose, afterClose, onClosed } = ctx;
   const incidents = new Map();
   const reconnecting = new Set();
   const now = ctx.now || Date.now;
+  const recovery = createSessionRecoveryService({ now, sleep: ctx.sleep,
+    validate: ctx.validateReconnect, inspect: ctx.inspectRecovery, reconnect });
 
   async function reconnect(params = {}, executionContext = {}) {
     if (typeof params.sessionId !== "string" || !params.sessionId.trim()) {
@@ -16,6 +19,8 @@ function createSessionService(ctx = {}) {
     const validation = ctx.validateReconnect(params);
     if (validation?.ok !== true) return validation || { ok: false, error: "Reconnect not authorized." };
     executionContext.beforeExecute?.();
+    const timeoutMs = Math.min(5000, (executionContext.deadlineAt ?? now() + 5000) - now());
+    if (timeoutMs <= 0) return { ok: false, started: false, code: "RECONNECT_EXPIRED", error: "Reconnect dispatch deadline expired." };
     const id = params.sessionId;
     if (validation.connected === true) {
       incidents.delete(id);
@@ -35,7 +40,7 @@ function createSessionService(ctx = {}) {
     const next = { startedAt: incident?.startedAt ?? time, attempts: (incident?.attempts || 0) + 1, nextAt: time + (incident ? 5000 : 2000) };
     incidents.set(id, next);
     try {
-      const result = await invokeSessionAgent("session.reconnect", { sessionId: id });
+      const result = await invokeSessionAgent("session.reconnect", { sessionId: id, expiresAt: now() + timeoutMs }, { timeoutMs });
       const current = ctx.validateReconnect(params);
       if (current?.ok !== true) return current || { ok: false, error: "Reconnect scope was revoked." };
       executionContext.beforeExecute?.();
@@ -87,6 +92,8 @@ function createSessionService(ctx = {}) {
 
   return {
     reconnect,
+    recover: recovery.recover,
+    forgetRecovery: recovery.forget,
     forgetReconnect: (sessionId) => incidents.delete(sessionId),
     close: (params = {}, executionContext = {}) => close(params, {
       beforeExecute: executionContext.beforeExecute,

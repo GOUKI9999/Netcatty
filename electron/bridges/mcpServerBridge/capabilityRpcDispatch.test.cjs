@@ -41,6 +41,7 @@ test('reconnect respects observer mode and denial before touching transport', as
       requestApprovalFromRenderer: async () => false,
       invokeVaultAgent: async () => { calls++; return { ok: true }; } });
     assert.equal((await dispatch('session/reconnect', { sessionId: 's', chatSessionId: 'chat' })).ok, false);
+    assert.equal((await dispatch('session/recover', { sessionId: 's', chatSessionId: 'chat' })).ok, false);
   }
   assert.equal(calls, 0);
 });

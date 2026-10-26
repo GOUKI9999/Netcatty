@@ -61,6 +61,7 @@ const SERVICE_BINDINGS = Object.freeze({
   "portforward.stop": { domain: "portforward", method: "stop" },
   "session.close": { domain: "session", method: "close" },
   "session.reconnect": { domain: "session", method: "reconnect" },
+  "session.recover": { domain: "session", method: "recover" },
 });
 
 function resolveCapabilitySurface(rpcMethod) {
@@ -98,6 +99,7 @@ function createCapabilityRpcDispatcher(deps) {
     invokeSessionAgent: invokeVaultAgent,
     validateClose: deps.validateSessionClose,
     validateReconnect: deps.validateSessionReconnect,
+    inspectRecovery: deps.inspectSessionRecovery,
     beforeClose: deps.beforeSessionClose,
     afterClose: deps.afterSessionClose,
     onClosed: deps.onSessionClosed,
@@ -135,7 +137,7 @@ function createCapabilityRpcDispatcher(deps) {
     // Session lifecycle operations execute against params.sessionId. host.open instead
     // targets its requested vault host; other vault/script operations must not
     // borrow an unrelated session's host grant.
-    let approvalTarget = ["session.close", "session.reconnect"].includes(capability.id)
+    let approvalTarget = ["session.close", "session.reconnect", "session.recover"].includes(capability.id)
       ? (deps.getApprovalTarget?.(params) || null)
       : null;
     if (capability.id === "vault.host.open" && deps.permissionMode === PERMISSION_MODES.CONFIRM) {

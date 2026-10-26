@@ -12,7 +12,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { existsSync } = require("node:fs");
 
-const { toUnpackedAsarPath, getFreshIdlePrompt, formatSyntheticEcho } = require("./ai/shellUtils.cjs");
+const { toUnpackedAsarPath, getFreshIdlePrompt, getVisibleIdlePrompt, formatSyntheticEcho } = require("./ai/shellUtils.cjs");
 const { appendVaultAgentGuidance } = require("../shared/vaultAgentGuidance.cjs");
 const {
   checkBlocklistForShell,
@@ -1271,6 +1271,7 @@ function ensureOpenedSessionMetadata(chatSessionId, sessionId, result) {
 function forgetClosedTerminalSession(sessionId) {
   if (!sessionId) return;
   sessionService?.forgetReconnect(sessionId);
+  sessionService?.forgetRecovery(sessionId);
   terminalSessionCloseRevision += 1;
   closedTerminalSessionRevisions.delete(sessionId);
   closedTerminalSessionRevisions.set(sessionId, terminalSessionCloseRevision);
@@ -1611,8 +1612,22 @@ sessionService = createSessionService({
     const scopeErr = validateSessionScope(params.sessionId, params.chatSessionId, params.scopedSessionIds);
     if (scopeErr) return { ok: false, error: scopeErr };
     if (isChatSessionCancelled(params.chatSessionId)) return { ok: false, error: "Chat session is cancelled." };
+    if (permissionMode === "observer") return { ok: false, error: "Recovery is unavailable in observer mode." };
     if (sessionIdleManager.isClosing(params.sessionId)) return { ok: false, error: "Session is closing." };
     return { ok: true };
+  },
+  inspectRecovery: async (params, timeoutMs) => {
+    if (typeof invokeVaultAgentFn !== "function") return { ok: false, error: "Session recovery bridge is unavailable." };
+    sessionIdleManager.touch(null, params.sessionId);
+    const state = await invokeVaultAgentFn("session.inspectRecovery", { sessionId: params.sessionId }, { timeoutMs });
+    if (state?.ok !== true) return state;
+    const runtime = sessions?.get(params.sessionId);
+    const meta = getSessionMeta(params.sessionId, params.chatSessionId);
+    const trackedShell = runtime && !isNetworkDeviceLikeMeta(meta)
+      && typeof runtime._promptTrackTail === "string";
+    const shellReady = state.status !== "connected" || !runtime ? false : trackedShell
+      ? Boolean(getFreshIdlePrompt(runtime) || getVisibleIdlePrompt(runtime)) : null;
+    return { ...state, shellReady, busy: Boolean(getSessionBusyError(params.sessionId)) };
   },
   invokeSessionAgent: (...args) => {
     if (typeof invokeVaultAgentFn !== "function") {

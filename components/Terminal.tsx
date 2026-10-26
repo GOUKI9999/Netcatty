@@ -153,6 +153,7 @@ import { createTerminalOutputHistoryPreview } from "./terminal/runtime/terminalO
 import { useZmodemTransfer } from "./terminal/hooks/useZmodemTransfer";
 import {
   createTerminalSessionStarters,
+  isAuthFailureMessage,
   type PendingAuth,
   type TerminalSessionDataMeta,
 } from "./terminal/runtime/createTerminalSessionStarters";
@@ -598,6 +599,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const reconnectWakeInvalidateModeRef = useRef<"dispose" | "keep">("dispose");
   const reconnectWakeTokenRef = useRef<symbol | null>(null);
   const manualReconnectRequestRef = useRef<() => void>(() => {});
+  const agentRecoveryStoppedRef = useRef(false);
   // Once a pane reconnects, every later SSH attempt in it must dial a fresh
   // connection: reusing a live/idle pooled transport multiplexes onto the old
   // login, so remote supplementary-group changes (e.g. `usermod -aG`) are not
@@ -3755,6 +3757,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   ]);
 
   const handleCancelConnect = () => {
+    agentRecoveryStoppedRef.current = true;
     if (pendingHostKeyRequestId) {
       void terminalBackend.respondHostKeyVerification(pendingHostKeyRequestId, false);
     }
@@ -3788,6 +3791,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const handleDisconnect = () => {
     if (attachExistingSession) return;
     if (statusRef.current === "disconnected") return;
+    agentRecoveryStoppedRef.current = true;
     if (pendingHostKeyRequestId) {
       void terminalBackend.respondHostKeyVerification(pendingHostKeyRequestId, false);
     }
@@ -4120,20 +4124,31 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   startReconnectRef.current = startReconnect;
 
   const handleRetry = () => {
+    agentRecoveryStoppedRef.current = false;
     startReconnect("manual");
   };
   manualReconnectRequestRef.current = handleRetry;
   const canAgentReconnectRef = useRef<() => boolean>(() => false);
   canAgentReconnectRef.current = () => statusRef.current === 'disconnected'
+    && !agentRecoveryStoppedRef.current && !isAuthFailureMessage(error || '')
     && !auth.needsAuth && !needsHostKeyVerification && !isConnectionAwaitingUserInput
     && !autoReconnectLoopActiveRef.current && !reconnectWakeInFlightRef.current
     && reconnectPreparationTokenRef.current === null;
+  const readAgentRecoveryRef = useRef(() => ({ status: String(statusRef.current), waitingForInput: false, reconnecting: false, stopped: false }));
+  readAgentRecoveryRef.current = () => ({
+    status: statusRef.current,
+    waitingForInput: Boolean(auth.needsAuth || needsHostKeyVerification || isConnectionAwaitingUserInput || isAuthFailureMessage(error || '')),
+    stopped: agentRecoveryStoppedRef.current,
+    reconnecting: autoReconnectLoopActiveRef.current || reconnectWakeInFlightRef.current
+      || reconnectPreparationTokenRef.current !== null,
+  });
   useEffect(() => {
     if (attachExistingSession) return undefined;
     return terminalReconnectRegistry.register(
       sessionId,
       () => manualReconnectRequestRef.current(),
       () => canAgentReconnectRef.current(),
+      () => readAgentRecoveryRef.current(),
     );
   }, [attachExistingSession, sessionId]);
 

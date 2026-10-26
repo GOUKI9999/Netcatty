@@ -160,6 +160,26 @@ const META_CAPABILITIES = [
     },
   },
   {
+    id: "session.recover",
+    domain: "session",
+    status: CAPABILITY_STATUS.IMPLEMENTED,
+    description: "Inspect and recover a scoped disconnected session in place. Automatically applies bounded reconnect/backoff and observes shell readiness for up to 20 seconds per call; pending calls may be continued within the shared 120-second incident and three-reconnect limit. Stops for authentication, busy jobs, cancellation or unavailable state. Never creates tabs or executes/replays commands. A connected transport with unknown shell readiness requires inspection.",
+    policy: {
+      write: true,
+      sensitiveRead: false,
+      longRunning: false,
+      requiresChatSession: true,
+      bypassesObserverBlock: false,
+      bypassesApproval: false,
+      bypassesChatCancel: false,
+    },
+    surfaces: {
+      global: { rpcMethod: "session/recover" },
+      public: { rpcMethod: "public/session/recover", mcpTool: "session_recover" },
+      cli: { command: ["session-recover"] },
+    },
+  },
+  {
     id: "session.close",
     domain: "session",
     status: CAPABILITY_STATUS.IMPLEMENTED,

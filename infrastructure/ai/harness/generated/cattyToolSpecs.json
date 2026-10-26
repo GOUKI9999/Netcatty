@@ -85,6 +85,29 @@
     }
   },
   {
+    "capabilityId": "session.recover",
+    "toolName": "session_recover",
+    "rpcMethod": "session/recover",
+    "localExecution": false,
+    "description": "Inspect and recover a scoped disconnected session in place. Automatically applies bounded reconnect/backoff and observes shell readiness for up to 20 seconds per call; pending calls may be continued within the shared 120-second incident and three-reconnect limit. Stops for authentication, busy jobs, cancellation or unavailable state. Never creates tabs or executes/replays commands. A connected transport with unknown shell readiness requires inspection.",
+    "inputShape": {
+      "sessionId": {
+        "type": "string",
+        "optional": false,
+        "description": "The existing terminal session ID in the current granted scope. Recovery preserves this session and never replays commands."
+      }
+    },
+    "policy": {
+      "write": true,
+      "sensitiveRead": false,
+      "longRunning": false,
+      "requiresChatSession": true,
+      "bypassesObserverBlock": false,
+      "bypassesApproval": false,
+      "bypassesChatCancel": false
+    }
+  },
+  {
     "capabilityId": "session.close",
     "toolName": "session_close",
     "rpcMethod": "session/close",
