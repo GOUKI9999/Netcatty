@@ -82,8 +82,17 @@ const MENU_VIEWPORT_GUTTER = 8;
 const CONTEXT_USAGE_RING_RADIUS = 10;
 const CONTEXT_USAGE_RING_CIRCUMFERENCE = 2 * Math.PI * CONTEXT_USAGE_RING_RADIUS;
 
+export function replaceSlashQueryWithCommand(
+  text: string,
+  range: { start: number; end: number } | null,
+  command: string,
+): string {
+  const replacement = `/${command} `;
+  return range ? `${text.slice(0, range.start)}${replacement}${text.slice(range.end)}` : replacement;
+}
+
 export function replaceSlashQueryWithRename(text: string, range: { start: number; end: number } | null): string {
-  return range ? `${text.slice(0, range.start)}/rename ${text.slice(range.end)}` : '/rename ';
+  return replaceSlashQueryWithCommand(text, range, 'rename');
 }
 
 function formatContextTokens(tokens: number): string {
@@ -767,12 +776,10 @@ const ChatInput: React.FC<ChatInputProps> = ({
       if (command === 'stop') onStop?.();
       if (command === 'chats') onListChats?.();
       if (command === 'rebind') {
-        // Keep the composer so the user can finish typing the dangling chat's
-        // number from the /chats listing.
-        const currentText = readComposerText();
-        if (/^\/rebind$/i.test(currentText.trim())) {
-          commitComposerText(`${currentText.trimEnd()} `);
-        }
+        // Replace a partial slash query (e.g. `/re`) with `/rebind ` so the
+        // user can finish the dangling-chat number; never leave `/re 1` to
+        // be sent to the agent.
+        commitComposerText(replaceSlashQueryWithCommand(readComposerText(), slashRange, 'rebind'));
         closeAllMenus();
         return;
       }

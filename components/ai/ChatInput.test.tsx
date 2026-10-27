@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import ChatInput, { replaceSlashQueryWithRename } from './ChatInput';
+import ChatInput, { replaceSlashQueryWithCommand, replaceSlashQueryWithRename } from './ChatInput';
 import {
   CHAT_INPUT_MAX_HEIGHT,
   CHAT_INPUT_MIN_HEIGHT,
@@ -226,6 +226,19 @@ test('selecting rename completes a partial slash query without sending', () => {
   const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
   const branch = source.slice(source.indexOf("if (command === 'rename')"), source.indexOf("commitComposerText('');", source.indexOf("if (command === 'rename')")));
   assert.match(branch, /commitComposerText\(replaceSlashQueryWithRename\(readComposerText\(\), slashRange\)\)/);
+  assert.match(branch, /closeAllMenus\(\);[\s\S]*?return;/);
+  assert.doesNotMatch(branch, /onSend/);
+});
+
+test('selecting rebind completes a partial slash query without sending', () => {
+  assert.equal(replaceSlashQueryWithCommand('/re', { start: 0, end: 3 }, 'rebind'), '/rebind ');
+  assert.equal(replaceSlashQueryWithCommand('/', { start: 0, end: 1 }, 'rebind'), '/rebind ');
+  assert.equal(replaceSlashQueryWithCommand('before /re after', { start: 7, end: 10 }, 'rebind'), 'before /rebind  after');
+  assert.equal(replaceSlashQueryWithCommand('old text', null, 'rebind'), '/rebind ');
+
+  const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
+  const branch = source.slice(source.indexOf("if (command === 'rebind')"), source.indexOf("if (command === 'rename')"));
+  assert.match(branch, /commitComposerText\(replaceSlashQueryWithCommand\(readComposerText\(\), slashRange, 'rebind'\)\)/);
   assert.match(branch, /closeAllMenus\(\);[\s\S]*?return;/);
   assert.doesNotMatch(branch, /onSend/);
 });
