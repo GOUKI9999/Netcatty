@@ -950,16 +950,25 @@ export function useAIState() {
   // active session of its new scope so it shows in the scoped history again.
   const rebindSessionScope = useCallback((
     sessionId: string,
-    scope: { type: 'terminal' | 'workspace'; targetId: string },
+    scope: { type: 'terminal' | 'workspace'; targetId: string; hostIds?: string[] },
   ) => {
     const scopeKey = `${scope.type}:${scope.targetId}`;
     setSessionsRaw(prev => {
       const next = prev.map(s => {
         if (s.id !== sessionId) return s;
         const { scopeDangling: _cleared, ...rest } = s;
+        // Replace scope entirely (including hostIds) so history matching follows
+        // the destination terminal/workspace rather than the chat's old host.
+        const nextScope: AISession['scope'] = {
+          type: scope.type,
+          targetId: scope.targetId,
+        };
+        if (scope.hostIds && scope.hostIds.length > 0) {
+          nextScope.hostIds = [...scope.hostIds];
+        }
         return {
           ...rest,
-          scope: { ...s.scope, type: scope.type, targetId: scope.targetId },
+          scope: nextScope,
           updatedAt: Date.now(),
         } as AISession;
       });

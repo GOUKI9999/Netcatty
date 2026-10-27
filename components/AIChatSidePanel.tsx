@@ -552,7 +552,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       toast.warning(t('ai.chat.rebindUsage'));
       return;
     }
-    rebindSessionScope?.(target.sessionId, { type: scopeType, targetId: scopeTargetId });
+    rebindSessionScope?.(target.sessionId, { type: scopeType, targetId: scopeTargetId, hostIds: scopeHostIds });
     toast.success(t('ai.chat.rebindDone').replace('{title}', target.title));
     // Do not rebuild /chats from this render's stale sessions (still dangling).
     // Drop the resolved entry from the stored listing so a repeat /rebind <n>
@@ -571,7 +571,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     }
     lastChatsListingRef.current = remaining;
     setPanelCommandNote(formatAiChatsListingNote(remaining, t));
-  }, [rebindSessionScope, scopeTargetId, scopeType, t]);
+  }, [rebindSessionScope, scopeHostIds, scopeTargetId, scopeType, t]);
 
   // Manual durability actions (history drawer header). Export writes the
   // whole store to a user-chosen JSON file; import merges by id.
