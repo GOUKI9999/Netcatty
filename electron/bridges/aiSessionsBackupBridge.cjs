@@ -127,7 +127,7 @@ function writeGeneration(json) {
 }
 
 /**
- * Read the newest parseable generation. Corrupt generations are skipped and
+ * Read the newest usable session array. Invalid generations are skipped and
  * older ones are tried, so one bad write never blocks a restore.
  */
 function readLatestGeneration() {
@@ -136,7 +136,9 @@ function readLatestGeneration() {
   for (const file of listGenerationFiles(dir)) {
     try {
       const json = fs.readFileSync(path.join(dir, file), "utf-8");
-      JSON.parse(json); // corruption guard: unparsable generations are skipped
+      const parsed = JSON.parse(json);
+      // Structurally unusable payloads can fall back to an older session array.
+      if (!Array.isArray(parsed)) continue;
       return { ok: true, json, file };
     } catch {
       // try the next older generation

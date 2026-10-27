@@ -66,6 +66,25 @@ test("readLatestGeneration skips corrupt generations and reads the newest parsea
   }
 });
 
+test("readLatestGeneration skips non-array generations", () => {
+  const dir = makeTempDir();
+  bridge.__internals._setBackupDir(dir);
+  try {
+    const olderFile = "ai-sessions-20260101T000000-000Z.json";
+    const sessions = [{ id: "s1" }];
+    fs.writeFileSync(path.join(dir, olderFile), JSON.stringify(sessions));
+    fs.writeFileSync(path.join(dir, "ai-sessions-20260102T000000-000Z.json"), JSON.stringify({ sessions }));
+
+    const latest = bridge.__internals.readLatestGeneration();
+    assert.equal(latest.ok, true);
+    assert.equal(latest.file, olderFile);
+    assert.deepEqual(JSON.parse(latest.json), sessions);
+  } finally {
+    bridge.__internals._setBackupDir(null);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("writeGeneration rejects invalid or oversized payloads", () => {
   const dir = makeTempDir();
   bridge.__internals._setBackupDir(dir);
