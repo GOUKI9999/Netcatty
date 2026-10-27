@@ -2248,6 +2248,8 @@ const AI_CHAT_SIDE_PANEL_AI_STATE_KEYS = [
   'deleteSession',
   'updateSessionTitle',
   'rebindSessionScope',
+  'exportSessionsBackup',
+  'importSessionsBackup',
   'updateSessionExternalSessionId',
   'addMessageToSession',
   'updateLastMessage',
