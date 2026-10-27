@@ -965,7 +965,10 @@ export function useAIState() {
       emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
       return next;
     });
-  }, [persistSessions]);
+    // Open the rebound chat in this panel; active-map alone loses to an
+    // explicit draft/session panelView that still points elsewhere.
+    setPanelViewByScope((prev) => setSessionView(prev, scopeKey, sessionId));
+  }, [persistSessions, setPanelViewByScope]);
 
   // Manual durability escape hatch (issue #4015 follow-up): export the
   // current store to a user-chosen JSON file, or import one back in.
