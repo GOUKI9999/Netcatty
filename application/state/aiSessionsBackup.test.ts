@@ -9,7 +9,7 @@ import {
   parseBackupSessions,
   shouldRestoreFromBackup,
 } from './aiSessionsBackup';
-import { pruneSessionsForStorage } from './aiStateSnapshots';
+import { prepareRestoredSessions, pruneSessionsForStorage } from './aiStateSnapshots';
 
 function makeSession(id: string, updatedAt = 1_000): AISession {
   return {
@@ -45,10 +45,21 @@ test('parseBackupSessions ignores corrupt payloads and drops malformed entries',
     { ...makeSession('null-scope'), scope: null },
     { ...makeSession('missing-title'), title: undefined },
     { ...makeSession('missing-agent'), agentId: undefined },
+    { ...makeSession('null-message'), messages: [null] },
+    { ...makeSession('incomplete-message'), messages: [{ id: 'm' }] },
+    { ...makeSession('invalid-timestamp'), messages: [{ id: 'm', role: 'user', timestamp: null }] },
     null,
-    makeSession('s2'),
+    { ...makeSession('s2'), messages: [{ id: 'm', role: 'user', timestamp: 1000, content: 'hello' }] },
   ]));
   assert.deepEqual(sessions?.map((session) => session.id), ['s2']);
+});
+
+test('restore preserves all sessions when cloud sync is enabled', () => {
+  const sessions = Array.from({ length: 51 }, (_, index) => makeSession(`s${index}`, index));
+  assert.deepEqual(prepareRestoredSessions(sessions, true), sessions);
+  const local = prepareRestoredSessions(sessions, false);
+  assert.equal(local.length, 50);
+  assert.equal(local.some(session => session.id === 's0'), false);
 });
 
 test('malformed imports cannot reach pruning or inject broken sessions', () => {

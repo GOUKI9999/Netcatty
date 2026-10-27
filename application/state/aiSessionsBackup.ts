@@ -54,6 +54,13 @@ export function parseBackupSessions(json: string | null | undefined): AISession[
       && (entry as AISession).scope !== null
       && typeof (entry as AISession).scope.type === 'string'
       && Array.isArray((entry as AISession).messages)
+      && (entry as AISession).messages.every(message => (
+        typeof message === 'object' && message !== null
+        && typeof message.id === 'string'
+        && typeof message.role === 'string'
+        && typeof message.timestamp === 'number'
+        && Number.isFinite(message.timestamp)
+      ))
       && typeof (entry as AISession).updatedAt === 'number'
       && Number.isFinite((entry as AISession).updatedAt)
     ),

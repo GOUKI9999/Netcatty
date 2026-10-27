@@ -20,6 +20,7 @@ import {
   STORAGE_KEY_AI_AGENT_THINKING_MAP,
   STORAGE_KEY_AI_WEB_SEARCH,
   STORAGE_KEY_AI_QUICK_MESSAGES,
+  STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS,
 } from '../../infrastructure/config/storageKeys';
 import type { AIQuickMessage } from '../../infrastructure/ai/quickMessages';
 import { sanitizeQuickMessages } from '../../infrastructure/ai/quickMessages';
@@ -70,7 +71,7 @@ import {
   latestAIDraftsByScopeSnapshot,
   latestAIPanelViewByScopeSnapshot,
   latestAISessionsSnapshot,
-  pruneSessionsForStorage,
+  prepareRestoredSessions,
   writeSessionsForStorage,
   setLatestAIActiveSessionMapSnapshot,
   setLatestAIDraftsByScopeSnapshot,
@@ -200,7 +201,8 @@ export function useAIState() {
         if (!isMissingOrCorruptSessionsStore(localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS))) {
           return;
         }
-        const restored = pruneSessionsForStorage(parseBackupSessions(backup.json) ?? []);
+        const syncEnabled = !!localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled;
+        const restored = prepareRestoredSessions(parseBackupSessions(backup.json) ?? [], syncEnabled);
         if (restored.length === 0) return;
         setLatestAISessionsSnapshot(restored);
         setSessionsRaw(prev => (prev.length > 0 ? prev : restored));
