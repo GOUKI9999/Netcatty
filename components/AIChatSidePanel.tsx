@@ -318,6 +318,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   focusedSessionId,
   workspaces = [],
   terminalSessions = [],
+  liveScopeTargetIds,
   resolveExecutorContext,
   isVisible = true,
   notes = [],
@@ -514,9 +515,12 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   }, [handleRenameSession]);
 
   const handleListChats = useCallback(() => {
-    const liveTerminalIds = scopeType === 'workspace' && workspaceMemberTerminalIds
-      ? workspaceMemberTerminalIds
-      : new Set(scopeTargetId ? [scopeTargetId] : []);
+    // Prefer the app-wide live target set so chats bound to other still-open
+    // terminals are not mislabelled dangling / offered for /rebind.
+    const liveTerminalIds = liveScopeTargetIds
+      ?? (scopeType === 'workspace' && workspaceMemberTerminalIds
+        ? workspaceMemberTerminalIds
+        : new Set(scopeTargetId ? [scopeTargetId] : []));
     // Dangling chats no longer match any live scope (rank 0), so they must be
     // appended explicitly for the listing — that is where they become visible
     // and rebindable again (issue #4015 R2).
@@ -534,7 +538,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     });
     lastChatsListingRef.current = entries;
     setPanelCommandNote(formatAiChatsListingNote(entries, t));
-  }, [activeSessionId, externalAgents, historySessions, scopeLabel, scopeTargetId, scopeType, sessions, t, workspaces, workspaceMemberTerminalIds]);
+  }, [activeSessionId, externalAgents, historySessions, liveScopeTargetIds, scopeLabel, scopeTargetId, scopeType, sessions, t, workspaces, workspaceMemberTerminalIds]);
 
   // `/rebind <n>`: rebind the nth dangling chat from the last /chats listing
   // to this panel's current scope. Panel action — no agent round-trip.
@@ -2300,6 +2304,7 @@ export function aiChatSidePanelPropsAreEqual(
   if ((prev.isVisible ?? true) !== (next.isVisible ?? true)) return false;
   if (prev.scopeHostIds !== next.scopeHostIds) return false;
   if (prev.terminalSessions !== next.terminalSessions) return false;
+  if (prev.liveScopeTargetIds !== next.liveScopeTargetIds) return false;
   if (prev.resolveExecutorContext !== next.resolveExecutorContext) return false;
   if (prev.notes !== next.notes) return false;
   if (prev.hosts !== next.hosts) return false;

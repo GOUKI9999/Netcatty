@@ -283,6 +283,8 @@ interface AIChatPanelsHostProps {
   mountedTabIds: string[];
   activeTabId: string | null;
   activeSidePanelTab: SidePanelTab | null;
+  /** All live terminal+workspace target ids (for /chats dangling detection). */
+  liveScopeTargetIds: Set<string>;
   contextsByTabId: Map<string, AIPanelContext>;
   resolveExecutorContext: (scope: {
     type: 'terminal' | 'workspace';
@@ -452,6 +454,7 @@ function aiChatPanelsHostAreEqual(
   next: AIChatPanelsHostProps,
 ): boolean {
   if (prev.mountedTabIds !== next.mountedTabIds) return false;
+  if (prev.liveScopeTargetIds !== next.liveScopeTargetIds) return false;
   if (prev.contextsByTabId !== next.contextsByTabId) return false;
   if (prev.activeSidePanelTab !== next.activeSidePanelTab) return false;
   if (prev.pendingTerminalSelection !== next.pendingTerminalSelection) return false;
@@ -492,6 +495,7 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
   mountedTabIds,
   activeTabId,
   activeSidePanelTab,
+  liveScopeTargetIds,
   contextsByTabId,
   resolveExecutorContext,
   pendingTerminalSelection,
@@ -634,6 +638,7 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
                     focusedSessionId={context.focusedSessionId}
                     workspaces={aiPanelWorkspaces}
                     terminalSessions={context.terminalSessions}
+                    liveScopeTargetIds={liveScopeTargetIds}
                     resolveExecutorContext={resolveExecutorContext}
                     isVisible={isVisible}
                     notes={notes}

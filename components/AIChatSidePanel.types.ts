@@ -111,6 +111,8 @@ export interface AIChatSidePanelProps {
   focusedSessionId?: string;
   /** Live workspaces, used to resolve workspace titles for `/chats`. */
   workspaces?: Array<{ id: string; title: string }>;
+  /** All currently live terminal (and workspace) scope target ids. */
+  liveScopeTargetIds?: Set<string>;
 
   // Terminal session context (from parent)
   terminalSessions?: Array<{

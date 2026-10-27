@@ -205,16 +205,27 @@ export function useAIState() {
         if (cancelled || !backup?.ok) return;
         // Re-check after the async gap: a session may have been created
         // while the backup was being read; never restore over live state.
+        // Cover both persisted storage and in-memory snapshot/React state —
+        // createSession updates the snapshot before the debounced disk write.
         if (!isMissingOrCorruptSessionsStore(localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS))) {
           return;
         }
+        if ((latestAISessionsSnapshot?.length ?? 0) > 0) return;
         const syncEnabled = !!localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled;
         const restored = prepareRestoredSessions(parseBackupSessions(backup.json) ?? [], syncEnabled);
         if (restored.length === 0) return;
-        setLatestAISessionsSnapshot(restored);
-        setSessionsRaw(prev => (prev.length > 0 ? prev : restored));
-        writeSessionsForStorage(restored);
-        emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
+        let didRestore = false;
+        setSessionsRaw(prev => {
+          if (prev.length > 0 || (latestAISessionsSnapshot?.length ?? 0) > 0) {
+            return prev;
+          }
+          didRestore = true;
+          setLatestAISessionsSnapshot(restored);
+          writeSessionsForStorage(restored);
+          emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
+          return restored;
+        });
+        if (!didRestore) return;
         console.info(
           `[AIState] Restored ${restored.length} AI session(s) from the disk backup.`,
         );
