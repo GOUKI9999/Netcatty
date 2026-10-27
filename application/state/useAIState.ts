@@ -215,21 +215,17 @@ export function useAIState() {
         const syncEnabled = !!localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled;
         const restored = prepareRestoredSessions(parseBackupSessions(backup.json) ?? [], syncEnabled);
         if (restored.length === 0) return;
-        let didRestore = false;
-        setSessionsRaw(prev => {
-          if (prev.length > 0 || (latestAISessionsSnapshot?.length ?? 0) > 0) {
-            return prev;
-          }
-          didRestore = true;
-          setLatestAISessionsSnapshot(restored);
-          writeSessionsForStorage(restored);
-          emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
-          return restored;
-        });
-        if (!didRestore) return;
-        console.info(
-          `[AIState] Restored ${restored.length} AI session(s) from the disk backup.`,
-        );
+        // Apply restore synchronously (not inside a setState updater). A
+        // deferred updater would leave didRestore false and skip dangling
+        // marking even when the records later land in React state.
+        if ((latestAISessionsSnapshot?.length ?? 0) > 0) return;
+        if (sessionsRef.current.length > 0) return;
+        if (!isMissingOrCorruptSessionsStore(localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS))) {
+          return;
+        }
+        setLatestAISessionsSnapshot(restored);
+        writeSessionsForStorage(restored);
+        emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
         // Restore does not change live terminals/workspaces, so the orphan-
         // cleanup effect will not run. Reuse the last known live target set
         // (empty is valid: nothing live) so chats bound to missing scopes
@@ -242,6 +238,9 @@ export function useAIState() {
           latestAIActiveSessionMapSnapshot
             ?? localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP)
             ?? {},
+        );
+        console.info(
+          `[AIState] Restored ${restored.length} AI session(s) from the disk backup.`,
         );
       } catch {
         // Backup restore must never break startup.
