@@ -24,6 +24,7 @@ reorderWorkspaceFocusSessionOrder,
 SplitDirection,
 SplitHint,
 updateWorkspaceSplitSizes,
+  invertSplitPosition,
 } from '../../domain/workspace';
 import { clearSessionFontSizeOverride as clearSessionFontSizeOverrideFields } from '../../domain/terminalAppearance';
 import {
@@ -839,10 +840,19 @@ export const useSessionState = ({
       if (!orphanSession || orphanSession.workspaceId) return;
       // Split next to the anchor's existing pane: the raw drop hint targets
       // the orphan's pane, which is not part of this workspace tree yet.
+      // When the dragged (joining) pane already owns the workspace, the orphan
+      // is what gets inserted — invert the drop position so the previewed
+      // side still matches (hint describes where the dragged pane should sit).
+      const joinOwnsWorkspace = Boolean(joiningSession?.workspaceId) && !baseSession?.workspaceId;
+      const insertHint = {
+        ...hint,
+        targetSessionId: anchorSessionId,
+        position: joinOwnsWorkspace ? invertSplitPosition(hint.position) : hint.position,
+      };
       addSessionToWorkspace(
         anchorWorkspaceId,
         orphanSessionId,
-        { ...hint, targetSessionId: anchorSessionId },
+        insertHint,
       );
       // The orphan's standalone tab slot is replaced by the workspace tab.
       setTabOrder((prevTabOrder) => prevTabOrder.filter((id) => id !== orphanSessionId));

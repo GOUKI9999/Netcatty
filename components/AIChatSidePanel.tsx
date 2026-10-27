@@ -2321,6 +2321,7 @@ export function aiChatSidePanelPropsAreEqual(
   if (prev.scopeHostIds !== next.scopeHostIds) return false;
   if (prev.terminalSessions !== next.terminalSessions) return false;
   if (prev.liveScopeTargetIds !== next.liveScopeTargetIds) return false;
+  if (prev.workspaces !== next.workspaces) return false;
   if (prev.resolveExecutorContext !== next.resolveExecutorContext) return false;
   if (prev.notes !== next.notes) return false;
   if (prev.hosts !== next.hosts) return false;

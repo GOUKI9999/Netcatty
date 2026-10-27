@@ -90,6 +90,37 @@ test("merging a workspace tab with a standalone tab reuses the workspace id (iss
   // The standalone tab slot is replaced by the workspace tab.
   assert.ok(!current().orderedTabs.includes(standaloneId));
 
+
+  // Dropping a workspace member onto a standalone tab must insert the
+  // standalone on the opposite side of the drop hint (hint describes where
+  // the dragged member should appear relative to the standalone).
+  let orientationStandaloneId = "";
+  let orientationMemberId = "";
+  await act(async () => {
+    orientationStandaloneId = current().createLocalTerminal({ shellName: "orient-standalone" });
+  });
+  // memberId is already in workspaceId; drop member onto the new standalone with position "right"
+  // (preview: member to the right of standalone ⇒ standalone should end up LEFT of member).
+  await act(async () => {
+    current().createWorkspaceFromSessions(orientationStandaloneId, memberId, {
+      direction: "vertical",
+      position: "right",
+      targetSessionId: orientationStandaloneId,
+    });
+  });
+  {
+    const root = current().workspaces.find((ws) => ws.id === workspaceId)?.root;
+    assert.ok(root);
+    const ordered = collectSessionIds(root!);
+    const standaloneIdx = ordered.indexOf(orientationStandaloneId);
+    const memberIdx = ordered.indexOf(memberId);
+    assert.ok(standaloneIdx >= 0 && memberIdx >= 0);
+    assert.ok(
+      standaloneIdx < memberIdx,
+      `expected standalone left of member after inverted right-drop, got order ${ordered.join(",")}`,
+    );
+  }
+
   // Two genuinely standalone tabs still create a fresh workspace.
   let firstStandaloneId = "";
   let secondStandaloneId = "";
