@@ -947,6 +947,7 @@ export function useAIState() {
     sessionsRef.current = persisted;
     setLatestAISessionsSnapshot(persisted);
     setSessionsRaw(persisted);
+    emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
     return persisted.filter(session => importedIds.has(session.id)).length;
   }, []);
 
