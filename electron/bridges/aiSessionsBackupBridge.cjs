@@ -36,6 +36,11 @@ const MAX_GENERATIONS = 5;
  */
 const MAX_BACKUP_JSON_BYTES = 64 * 1024 * 1024;
 
+/**
+ * The automatic mirror recovers from in-profile localStorage loss or corruption
+ * (quota, empty or corrupt JSON, or accidental clear). Profile deletion or
+ * recreation is out of scope; use the manual export/import buttons for that.
+ */
 function ensureBackupDir() {
   if (backupDir) return backupDir;
   try {
