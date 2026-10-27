@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import ChatInput from './ChatInput';
+import ChatInput, { replaceSlashQueryWithRename } from './ChatInput';
 import {
   CHAT_INPUT_MAX_HEIGHT,
   CHAT_INPUT_MIN_HEIGHT,
@@ -215,6 +215,19 @@ test('renders the Catty context usage ring after the model chip', () => {
   assert.match(html, /class="h-4 w-4"/);
   assert.doesNotMatch(html, /text-\[7px\]/);
   assert.match(html, /aria-valuenow="50"/);
+});
+
+test('selecting rename completes a partial slash query without sending', () => {
+  assert.equal(replaceSlashQueryWithRename('/ren', { start: 0, end: 4 }), '/rename ');
+  assert.equal(replaceSlashQueryWithRename('/', { start: 0, end: 1 }), '/rename ');
+  assert.equal(replaceSlashQueryWithRename('before /ren after', { start: 7, end: 11 }), 'before /rename  after');
+  assert.equal(replaceSlashQueryWithRename('old text', null), '/rename ');
+
+  const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
+  const branch = source.slice(source.indexOf("if (command === 'rename')"), source.indexOf("commitComposerText('');", source.indexOf("if (command === 'rename')")));
+  assert.match(branch, /commitComposerText\(replaceSlashQueryWithRename\(readComposerText\(\), slashRange\)\)/);
+  assert.match(branch, /closeAllMenus\(\);[\s\S]*?return;/);
+  assert.doesNotMatch(branch, /onSend/);
 });
 
 test('slash picker system commands clear the local composer', () => {

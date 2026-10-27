@@ -81,6 +81,10 @@ const MENU_VIEWPORT_GUTTER = 8;
 const CONTEXT_USAGE_RING_RADIUS = 10;
 const CONTEXT_USAGE_RING_CIRCUMFERENCE = 2 * Math.PI * CONTEXT_USAGE_RING_RADIUS;
 
+export function replaceSlashQueryWithRename(text: string, range: { start: number; end: number } | null): string {
+  return range ? `${text.slice(0, range.start)}/rename ${text.slice(range.end)}` : '/rename ';
+}
+
 function formatContextTokens(tokens: number): string {
   if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
   if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(tokens >= 100_000 ? 0 : 1)}K`;
@@ -759,12 +763,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
       if (command === 'stop') onStop?.();
       if (command === 'chats') onListChats?.();
       if (command === 'rename') {
-        // Keep the composer so the user can finish typing the title; only
-        // guarantee the trailing space that separates the argument.
-        const currentText = readComposerText();
-        if (/^\/rename$/i.test(currentText.trim())) {
-          commitComposerText(`${currentText.trimEnd()} `);
-        }
+        commitComposerText(replaceSlashQueryWithRename(readComposerText(), slashRange));
         closeAllMenus();
         return;
       }
@@ -777,7 +776,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
       return;
     }
     insertUserSkillToken(item.skill);
-  }, [canCompact, closeAllMenus, commitComposerText, insertQuickMessage, insertUserSkillToken, onCompact, onListChats, onStop, readComposerText]);
+  }, [canCompact, closeAllMenus, commitComposerText, insertQuickMessage, insertUserSkillToken, onCompact, onListChats, onStop, readComposerText, slashRange]);
 
   // Reset active highlight when a menu opens or when the *identity* of the
   // visible items changes. Watching only `.length` misses cases where the

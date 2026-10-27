@@ -32,7 +32,7 @@ export function isMissingOrCorruptSessionsStore(raw: string | null | undefined):
 /**
  * Parse a backup payload into sessions. Returns null when the payload is
  * corrupt or malformed (ignored gracefully); also drops entries without a
- * usable `id`, messages array, and finite update timestamp. Backup generations are written by the same serializer as the
+ * usable required fields. Backup generations are written by the same serializer as the
  * live store, so entries are expected to be full AISession objects.
  */
 export function parseBackupSessions(json: string | null | undefined): AISession[] | null {
@@ -48,6 +48,11 @@ export function parseBackupSessions(json: string | null | undefined): AISession[
     (entry): entry is AISession => (
       typeof entry === 'object' && entry !== null
       && typeof (entry as AISession).id === 'string'
+      && typeof (entry as AISession).title === 'string'
+      && typeof (entry as AISession).agentId === 'string'
+      && typeof (entry as AISession).scope === 'object'
+      && (entry as AISession).scope !== null
+      && typeof (entry as AISession).scope.type === 'string'
       && Array.isArray((entry as AISession).messages)
       && typeof (entry as AISession).updatedAt === 'number'
       && Number.isFinite((entry as AISession).updatedAt)

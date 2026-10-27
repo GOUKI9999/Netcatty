@@ -41,6 +41,10 @@ test('parseBackupSessions ignores corrupt payloads and drops malformed entries',
   const sessions = parseBackupSessions(JSON.stringify([
     { id: 's1' },
     { nope: true },
+    { id: 'missing-scope', title: 'Missing scope', agentId: 'catty', messages: [], updatedAt: 1000 },
+    { ...makeSession('null-scope'), scope: null },
+    { ...makeSession('missing-title'), title: undefined },
+    { ...makeSession('missing-agent'), agentId: undefined },
     null,
     makeSession('s2'),
   ]));
