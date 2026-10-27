@@ -355,6 +355,10 @@ export function pruneSessionsForStorage(sessions: AISession[]): AISession[] {
   });
 }
 
+export function prepareRestoredSessions(sessions: AISession[], syncEnabled: boolean): AISession[] {
+  return syncEnabled ? sessions : pruneSessionsForStorage(sessions);
+}
+
 /**
  * Serialize sessions for localStorage under a byte budget, escalating pruning
  * as needed. Returns the JSON to persist plus the (possibly) further-pruned
