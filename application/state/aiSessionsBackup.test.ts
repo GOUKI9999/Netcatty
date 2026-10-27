@@ -7,6 +7,7 @@ import {
   isMissingOrCorruptSessionsStore,
   mergeImportedSessions,
   parseBackupSessions,
+  readLiveSessionsArray,
   shouldRestoreFromBackup,
 } from './aiSessionsBackup';
 import { prepareRestoredSessions, pruneSessionsForStorage } from './aiStateSnapshots';
@@ -30,6 +31,14 @@ test('isMissingOrCorruptSessionsStore distinguishes missing or corrupt stores fr
   assert.equal(isMissingOrCorruptSessionsStore('{corrupt'), true);
   assert.equal(isMissingOrCorruptSessionsStore('{}'), true);
   assert.equal(isMissingOrCorruptSessionsStore('[{"id":"s1"}]'), false);
+});
+
+test('readLiveSessionsArray normalizes missing and corrupt stores', () => {
+  for (const raw of [null, undefined, '', '{}', 'not-json']) {
+    assert.deepEqual(readLiveSessionsArray(raw), []);
+  }
+  const sessions = [makeSession('s1')];
+  assert.deepEqual(readLiveSessionsArray(JSON.stringify(sessions)), sessions);
 });
 
 test('parseBackupSessions ignores corrupt payloads and drops malformed entries', () => {

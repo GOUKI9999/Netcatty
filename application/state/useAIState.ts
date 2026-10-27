@@ -84,6 +84,7 @@ import {
   isMissingOrCorruptSessionsStore,
   mergeImportedSessions,
   parseBackupSessions,
+  readLiveSessionsArray,
 } from './aiSessionsBackup';
 import { AI_STATE_CHANGED_EVENT, emitAIStateChanged } from './aiStateEvents';
 import {
@@ -176,8 +177,7 @@ export function useAIState() {
   // ── Sessions ──
   const [sessions, setSessionsRaw] = useState<AISession[]>(() =>
     latestAISessionsSnapshot
-      ?? localStorageAdapter.read<AISession[]>(STORAGE_KEY_AI_SESSIONS)
-      ?? []
+      ?? readLiveSessionsArray(localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS))
   );
   // An explicit empty array is authoritative, even if the backup is stale.
   // Only a missing or corrupt store can be restored from disk.

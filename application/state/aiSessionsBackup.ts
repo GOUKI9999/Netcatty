@@ -29,6 +29,19 @@ export function isMissingOrCorruptSessionsStore(raw: string | null | undefined):
   }
 }
 
+/** Read the live sessions array from a raw localStorage string. Returns [] when
+ * missing/corrupt (including parseable non-arrays such as `{}`), so callers never
+ * treat a non-array as AISession[]. */
+export function readLiveSessionsArray(raw: string | null | undefined): AISession[] {
+  if (isMissingOrCorruptSessionsStore(raw)) return [];
+  try {
+    const parsed = JSON.parse(raw as string);
+    return Array.isArray(parsed) ? parsed as AISession[] : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Parse a backup payload into sessions. Returns null when the payload is
  * corrupt or malformed (ignored gracefully); also drops entries without a
