@@ -1607,6 +1607,24 @@ function reportOpenedSessionActivity(event = {}) {
   return sessionIdleManager.touch(null, sessionId);
 }
 
+// In the default terminal worker path the SSH runtime (and its prompt
+// tracking state) lives in the worker, so the main-process `sessions` map is
+// empty for it. Ask the owning worker for read-only prompt readiness. A miss
+// or a worker failure yields null: an unknown state must never report ready.
+async function queryWorkerShellReadiness(sessionId, status) {
+  if (status !== "connected" || !terminalWorkerManager?.request) return null;
+  try {
+    const result = await terminalWorkerManager.request("netcatty:ai:shellReadiness", { sessionId }, {});
+    if (result?.ok !== true || result.found !== true) return null;
+    return {
+      trackedShell: result.trackedShell === true,
+      ready: Boolean(result.freshIdlePrompt || result.visibleIdlePrompt),
+    };
+  } catch {
+    return null;
+  }
+}
+
 sessionService = createSessionService({
   validateReconnect: (params = {}) => {
     const scopeErr = validateSessionScope(params.sessionId, params.chatSessionId, params.scopedSessionIds);
@@ -1623,10 +1641,13 @@ sessionService = createSessionService({
     if (state?.ok !== true) return state;
     const runtime = sessions?.get(params.sessionId);
     const meta = getSessionMeta(params.sessionId, params.chatSessionId);
-    const trackedShell = runtime && !isNetworkDeviceLikeMeta(meta)
-      && typeof runtime._promptTrackTail === "string";
-    const shellReady = state.status !== "connected" || !runtime ? false : trackedShell
-      ? Boolean(getFreshIdlePrompt(runtime) || getVisibleIdlePrompt(runtime)) : null;
+    const probe = runtime ? {
+      trackedShell: typeof runtime._promptTrackTail === "string",
+      ready: Boolean(getFreshIdlePrompt(runtime) || getVisibleIdlePrompt(runtime)),
+    } : await queryWorkerShellReadiness(params.sessionId, state.status);
+    const trackedShell = Boolean(probe?.trackedShell) && !isNetworkDeviceLikeMeta(meta);
+    const shellReady = state.status !== "connected" || !probe ? false : trackedShell
+      ? Boolean(probe.ready) : null;
     return { ...state, shellReady, busy: Boolean(getSessionBusyError(params.sessionId)) };
   },
   invokeSessionAgent: (...args) => {
