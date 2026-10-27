@@ -232,6 +232,40 @@ test('orphan cleanup marks dangling chats instead of stripping them, and clears 
   }
 });
 
+test('orphan cleanup with an empty live-target set marks all scoped chats dangling', (t) => {
+  const previousSessions = latestAISessionsSnapshot;
+  const previousActiveSessionMap = latestAIActiveSessionMapSnapshot;
+  t.mock.method(localStorageAdapter, 'read', () => null);
+  t.mock.method(localStorageAdapter, 'write', () => true);
+  t.mock.method(localStorageAdapter, 'writeString', () => true);
+  const previousWindow = globalThis.window;
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: { dispatchEvent: () => true, netcatty: {} },
+  });
+  const orphan = {
+    ...makeSession('orphan-chat', 1, []),
+    scope: { type: 'terminal' as const, targetId: 'gone' },
+  };
+  setLatestAISessionsSnapshot([orphan]);
+  setLatestAIActiveSessionMapSnapshot({ 'terminal:gone': 'orphan-chat' });
+
+  try {
+    // Empty is a valid observed live set (nothing mounted), not "unknown".
+    cleanupOrphanedAISessions(new Set());
+    const persisted = latestAISessionsSnapshot;
+    assert.ok(persisted);
+    assert.equal(persisted.find((s) => s.id === 'orphan-chat')?.scopeDangling, true);
+  } finally {
+    setLatestAISessionsSnapshot(previousSessions ?? []);
+    setLatestAIActiveSessionMapSnapshot(previousActiveSessionMap ?? {});
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: previousWindow,
+    });
+  }
+});
+
 test('serializeSessionsForStorage strips oldest ciphertext before dropping visible sessions', async () => {
   const { serializeSessionsForStorage } = await import('./aiStateSnapshots');
   const ciphertext = 'gAAAA'.repeat(50000); // ~250 KB of ciphertext per message

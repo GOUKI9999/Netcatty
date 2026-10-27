@@ -230,6 +230,19 @@ export function useAIState() {
         console.info(
           `[AIState] Restored ${restored.length} AI session(s) from the disk backup.`,
         );
+        // Restore does not change live terminals/workspaces, so the orphan-
+        // cleanup effect will not run. Reuse the last known live target set
+        // (empty is valid: nothing live) so chats bound to missing scopes
+        // become dangling and /chats can offer /rebind.
+        cleanupOrphanedAISessions(latestAIActiveTargetIdsSnapshot);
+        const nextSessions = latestAISessionsSnapshot ?? restored;
+        sessionsRef.current = nextSessions;
+        setSessionsRaw(nextSessions);
+        setActiveSessionIdMapRaw(
+          latestAIActiveSessionMapSnapshot
+            ?? localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP)
+            ?? {},
+        );
       } catch {
         // Backup restore must never break startup.
       }
@@ -1002,11 +1015,10 @@ export function useAIState() {
     setSessionsRaw(persisted);
     emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
     // Import does not change live terminals/workspaces, so the orphan-cleanup
-    // effect will not run. Reuse the last known live target set to mark chats
-    // bound to missing scopes as dangling so /chats can offer /rebind.
-    if (latestAIActiveTargetIdsSnapshot.size > 0) {
-      cleanupOrphanedAISessions(latestAIActiveTargetIdsSnapshot);
-    }
+    // effect will not run. Reuse the last known live target set (empty is
+    // valid: nothing live) to mark chats bound to missing scopes as dangling
+    // so /chats can offer /rebind.
+    cleanupOrphanedAISessions(latestAIActiveTargetIdsSnapshot);
     const nextSessions =
       latestAISessionsSnapshot
       ?? persisted;
