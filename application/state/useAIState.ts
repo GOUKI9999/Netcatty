@@ -990,6 +990,8 @@ export function useAIState() {
     if (!result?.success || !result.json) return 0;
     const imported = parseBackupSessions(result.json);
     if (!imported || imported.length === 0) return 0;
+    // Merge synchronously against the live ref so orphan cleanup sees the
+    // imported chats even if React would defer a setState updater.
     const syncEnabled = !!localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled;
     const next = prepareRestoredSessions(mergeImportedSessions(sessionsRef.current, imported), syncEnabled);
     if (!writeSessionsForStorage(next)) return 0;
@@ -1004,17 +1006,17 @@ export function useAIState() {
     // bound to missing scopes as dangling so /chats can offer /rebind.
     if (latestAIActiveTargetIdsSnapshot.size > 0) {
       cleanupOrphanedAISessions(latestAIActiveTargetIdsSnapshot);
-      const nextSessions =
-        latestAISessionsSnapshot
-        ?? readLiveSessionsArray(localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS));
-      sessionsRef.current = nextSessions;
-      setSessionsRaw(nextSessions);
-      setActiveSessionIdMapRaw(
-        latestAIActiveSessionMapSnapshot
-          ?? localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP)
-          ?? {},
-      );
     }
+    const nextSessions =
+      latestAISessionsSnapshot
+      ?? persisted;
+    sessionsRef.current = nextSessions;
+    setSessionsRaw(nextSessions);
+    setActiveSessionIdMapRaw(
+      latestAIActiveSessionMapSnapshot
+        ?? localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP)
+        ?? {},
+    );
     return persisted.filter(session => importedIds.has(session.id)).length;
   }, []);
 
