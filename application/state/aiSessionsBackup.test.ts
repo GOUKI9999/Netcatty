@@ -4,11 +4,12 @@ import test from 'node:test';
 import type { AISession } from '../../infrastructure/ai/types';
 import {
   DebouncedBackupMirror,
-  isEmptySessionsStore,
+  isMissingOrCorruptSessionsStore,
   mergeImportedSessions,
   parseBackupSessions,
   shouldRestoreFromBackup,
 } from './aiSessionsBackup';
+import { pruneSessionsForStorage } from './aiStateSnapshots';
 
 function makeSession(id: string, updatedAt = 1_000): AISession {
   return {
@@ -22,12 +23,13 @@ function makeSession(id: string, updatedAt = 1_000): AISession {
   } as never;
 }
 
-test('isEmptySessionsStore treats missing, empty, and corrupt stores as empty', () => {
-  assert.equal(isEmptySessionsStore(null), true);
-  assert.equal(isEmptySessionsStore(''), true);
-  assert.equal(isEmptySessionsStore('[]'), true);
-  assert.equal(isEmptySessionsStore('{corrupt'), true);
-  assert.equal(isEmptySessionsStore('[{"id":"s1"}]'), false);
+test('isMissingOrCorruptSessionsStore distinguishes missing or corrupt stores from valid arrays', () => {
+  assert.equal(isMissingOrCorruptSessionsStore(null), true);
+  assert.equal(isMissingOrCorruptSessionsStore(''), true);
+  assert.equal(isMissingOrCorruptSessionsStore('[]'), false);
+  assert.equal(isMissingOrCorruptSessionsStore('{corrupt'), true);
+  assert.equal(isMissingOrCorruptSessionsStore('{}'), true);
+  assert.equal(isMissingOrCorruptSessionsStore('[{"id":"s1"}]'), false);
 });
 
 test('parseBackupSessions ignores corrupt payloads and drops malformed entries', () => {
@@ -35,20 +37,31 @@ test('parseBackupSessions ignores corrupt payloads and drops malformed entries',
   assert.equal(parseBackupSessions(''), null);
   assert.equal(parseBackupSessions('not json'), null);
   assert.equal(parseBackupSessions('{"id":"s1"}'), null);
+  assert.equal(parseBackupSessions(JSON.stringify([{ id: 's1' }])), null);
   const sessions = parseBackupSessions(JSON.stringify([
     { id: 's1' },
     { nope: true },
     null,
-    { id: 's2' },
+    makeSession('s2'),
   ]));
-  assert.deepEqual(sessions?.map((session) => session.id), ['s1', 's2']);
+  assert.deepEqual(sessions?.map((session) => session.id), ['s2']);
 });
 
-test('restore happens only on an empty live store with a non-empty backup', () => {
+test('malformed imports cannot reach pruning or inject broken sessions', () => {
+  const current = [makeSession('live')];
+  const malformed = parseBackupSessions(JSON.stringify([{ id: 's1' }]));
+  assert.deepEqual(mergeImportedSessions(current, pruneSessionsForStorage(malformed ?? [])), current);
+  const valid = parseBackupSessions(JSON.stringify([{ id: 's1' }, makeSession('valid')]));
+  const merged = mergeImportedSessions(current, pruneSessionsForStorage(valid ?? []));
+  assert.deepEqual(new Set(merged.map((session) => session.id)), new Set(['live', 'valid']));
+});
+
+test('restore happens only on a missing or corrupt live store with a non-empty backup', () => {
   const backup = JSON.stringify([makeSession('s1')]);
   // Empty (or wiped) store -> restore.
   assert.equal(shouldRestoreFromBackup(null, backup), true);
-  assert.equal(shouldRestoreFromBackup('[]', backup), true);
+  assert.equal(shouldRestoreFromBackup('', backup), true);
+  assert.equal(shouldRestoreFromBackup('[]', backup), false);
   assert.equal(shouldRestoreFromBackup('{corrupt', backup), true);
   // Non-empty live store -> never restore (explicit deletions must win).
   assert.equal(shouldRestoreFromBackup('[{"id":"live"}]', backup), false);

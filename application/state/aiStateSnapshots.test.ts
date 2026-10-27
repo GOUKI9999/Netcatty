@@ -818,7 +818,7 @@ for (const [budget, expectedCalls] of [[128 * 1024, 160], [0, 161]]) {
   });
 }
 test('successful store writes schedule a throttled disk backup mirror', async (t) => {
-  const { writeSessionsForStorage, __flushBackupMirrorForTests, __resetBackupMirrorForTests } =
+  const { writeSessionsForStorage, flushBackupMirror, __resetBackupMirrorForTests } =
     await import('./aiStateSnapshots');
   __resetBackupMirrorForTests();
   const backupWrites: string[] = [];
@@ -841,14 +841,14 @@ test('successful store writes schedule a throttled disk backup mirror', async (t
     assert.equal(writeSessionsForStorage(sessions), true);
     // Throttled: nothing has been written to disk yet.
     assert.equal(backupWrites.length, 0);
-    __flushBackupMirrorForTests();
+    flushBackupMirror();
     assert.equal(backupWrites.length, 1);
     // The mirror carries exactly the JSON that landed in localStorage.
     assert.equal(backupWrites[0], writeString.mock.calls[0].arguments[1]);
     // Failed store writes never schedule a mirror.
     writeString.mock.mockImplementation(() => false);
     assert.equal(writeSessionsForStorage(sessions), false);
-    __flushBackupMirrorForTests();
+    flushBackupMirror();
     assert.equal(backupWrites.length, 1);
   } finally {
     __resetBackupMirrorForTests();

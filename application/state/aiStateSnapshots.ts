@@ -506,8 +506,12 @@ const backupMirror = new DebouncedBackupMirror((json) => {
   }
 });
 
-export function __flushBackupMirrorForTests() {
-  backupMirror.flushNow();
+export function flushBackupMirror() {
+  try {
+    backupMirror.flushNow();
+  } catch {
+    // Unload and persistence must remain fail-safe.
+  }
 }
 
 export function __resetBackupMirrorForTests() {

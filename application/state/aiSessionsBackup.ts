@@ -18,19 +18,13 @@ export interface AiSessionsBackupBridge {
   aiSessionsBackupImport?: () => Promise<{ success: boolean; json?: string }>;
 }
 
-/**
- * The live store is "empty" when the key is missing, unparsable, or holds an
- * empty array. This drives the deliberate restore asymmetry: restore only
- * into an empty store, never on top of a non-empty one (so a restored store
- * cannot resurrect chats the user explicitly deleted).
- */
-export function isEmptySessionsStore(raw: string | null | undefined): boolean {
+/** Restore only when the live store is missing or malformed. A valid empty
+ * array represents an intentional deletion and must remain authoritative. */
+export function isMissingOrCorruptSessionsStore(raw: string | null | undefined): boolean {
   if (raw == null || raw === '') return true;
   try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length === 0;
+    return !Array.isArray(JSON.parse(raw));
   } catch {
-    // Corrupted live store counts as empty: the backup is strictly better.
     return true;
   }
 }
@@ -38,7 +32,7 @@ export function isEmptySessionsStore(raw: string | null | undefined): boolean {
 /**
  * Parse a backup payload into sessions. Returns null when the payload is
  * corrupt or malformed (ignored gracefully); also drops entries without a
- * usable `id`. Backup generations are written by the same serializer as the
+ * usable `id`, messages array, and finite update timestamp. Backup generations are written by the same serializer as the
  * live store, so entries are expected to be full AISession objects.
  */
 export function parseBackupSessions(json: string | null | undefined): AISession[] | null {
@@ -52,21 +46,25 @@ export function parseBackupSessions(json: string | null | undefined): AISession[
   if (!Array.isArray(parsed)) return null;
   const sessions = parsed.filter(
     (entry): entry is AISession => (
-      typeof entry === 'object' && entry !== null && typeof (entry as AISession).id === 'string'
+      typeof entry === 'object' && entry !== null
+      && typeof (entry as AISession).id === 'string'
+      && Array.isArray((entry as AISession).messages)
+      && typeof (entry as AISession).updatedAt === 'number'
+      && Number.isFinite((entry as AISession).updatedAt)
     ),
   );
-  return sessions;
+  return sessions.length > 0 ? sessions : null;
 }
 
 /**
- * Decide whether to restore on boot: only when the live store is empty AND
+ * Decide whether to restore on boot: only when the live store is missing or corrupt AND
  * the backup actually contains at least one session.
  */
 export function shouldRestoreFromBackup(
   liveRaw: string | null | undefined,
   backupJson: string | null | undefined,
 ): boolean {
-  if (!isEmptySessionsStore(liveRaw)) return false;
+  if (!isMissingOrCorruptSessionsStore(liveRaw)) return false;
   const sessions = parseBackupSessions(backupJson);
   return sessions != null && sessions.length > 0;
 }

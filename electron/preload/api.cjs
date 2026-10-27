@@ -1708,12 +1708,12 @@ function createPreloadApi(ctx) {
     ipcRenderer.invoke("netcatty:crashLogs:openDir"),
 
   // AI Sessions Backup (disk mirror of the AI chat session store)
-  aiSessionsBackupWrite: (json) =>
-    ipcRenderer.invoke("netcatty:aiSessionsBackup:write", { json }),
+  aiSessionsBackupWrite: (payload) =>
+    ipcRenderer.invoke("netcatty:aiSessionsBackup:write", payload),
   aiSessionsBackupReadLatest: () =>
     ipcRenderer.invoke("netcatty:aiSessionsBackup:readLatest"),
-  aiSessionsBackupExport: (json) =>
-    ipcRenderer.invoke("netcatty:aiSessionsBackup:export", { json }),
+  aiSessionsBackupExport: (payload) =>
+    ipcRenderer.invoke("netcatty:aiSessionsBackup:export", payload),
   aiSessionsBackupImport: () =>
     ipcRenderer.invoke("netcatty:aiSessionsBackup:import"),
 

@@ -64,6 +64,7 @@ import {
   cleanupDeletedAIChatSessions,
   cleanupOrphanedAISessions,
   getAIBridge,
+  flushBackupMirror,
   getDraftUploadGeneration,
   latestAIActiveSessionMapSnapshot,
   latestAIDraftsByScopeSnapshot,
@@ -79,7 +80,7 @@ import {
   type PanelViewByScope,
 } from './aiStateSnapshots';
 import {
-  isEmptySessionsStore,
+  isMissingOrCorruptSessionsStore,
   mergeImportedSessions,
   parseBackupSessions,
 } from './aiSessionsBackup';
@@ -177,14 +178,12 @@ export function useAIState() {
       ?? localStorageAdapter.read<AISession[]>(STORAGE_KEY_AI_SESSIONS)
       ?? []
   );
-  // Durability restore (issue #4015 follow-up): when the live localStorage
-  // store is missing or empty but a disk backup generation exists, restore
-  // sessions from the newest backup. The asymmetry below is deliberate:
-  // empty -> restore, non-empty -> leave alone. Restoring on top of a
-  // non-empty store would resurrect chats the user explicitly deleted
-  // (deletions persist through the mirror, so an empty live store plus a
-  // non-empty backup can only mean the profile/store was wiped externally —
-  // exactly the failure mode this recovers from).
+  // An explicit empty array is authoritative, even if the backup is stale.
+  // Only a missing or corrupt store can be restored from disk.
+  useEffect(() => {
+    window.addEventListener('beforeunload', flushBackupMirror);
+    return () => window.removeEventListener('beforeunload', flushBackupMirror);
+  }, []);
   useEffect(() => {
     if (latestAISessionsSnapshot && latestAISessionsSnapshot.length > 0) return;
     const bridge = getAIBridge();
@@ -193,12 +192,12 @@ export function useAIState() {
     void (async () => {
       try {
         const liveRaw = localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS);
-        if (!isEmptySessionsStore(liveRaw)) return;
+        if (!isMissingOrCorruptSessionsStore(liveRaw)) return;
         const backup = await bridge.aiSessionsBackupReadLatest?.();
         if (cancelled || !backup?.ok) return;
         // Re-check after the async gap: a session may have been created
         // while the backup was being read; never restore over live state.
-        if (!isEmptySessionsStore(localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS))) {
+        if (!isMissingOrCorruptSessionsStore(localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS))) {
           return;
         }
         const restored = pruneSessionsForStorage(parseBackupSessions(backup.json) ?? []);
