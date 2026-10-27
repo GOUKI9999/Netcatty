@@ -58,6 +58,7 @@ export function parseBackupSessions(json: string | null | undefined): AISession[
         typeof message === 'object' && message !== null
         && typeof message.id === 'string'
         && typeof message.role === 'string'
+        && typeof message.content === 'string'
         && typeof message.timestamp === 'number'
         && Number.isFinite(message.timestamp)
       ))

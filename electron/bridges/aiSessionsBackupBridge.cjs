@@ -27,8 +27,14 @@ const EXPORT_PREFIX = "export-";
 const FILE_SUFFIX = ".json";
 /** Keep at most this many rolling generations (plus dated export files). */
 const MAX_GENERATIONS = 5;
-/** Hard cap for a mirrored payload; the renderer store itself targets ~2 MB. */
-const MAX_BACKUP_JSON_BYTES = 4 * 1024 * 1024;
+/**
+ * Hard cap for a mirrored payload. localStorage itself targets ~2 MB, but when
+ * cloud AI-session sync is enabled the renderer persists the full unpruned
+ * history for the disk mirror — that can exceed 4 MB. Keep a generous disk
+ * ceiling so synced histories still get rolling backups, while still rejecting
+ * runaway payloads.
+ */
+const MAX_BACKUP_JSON_BYTES = 64 * 1024 * 1024;
 
 function ensureBackupDir() {
   if (backupDir) return backupDir;
