@@ -64,7 +64,7 @@ import {
   type DefaultTargetSessionHint,
 } from '../application/state/useAIChatStreaming';
 import { getScopedHistorySessions } from './ai/scopedHistorySessions';
-import { buildAiChatsListingEntries, formatAiChatsListingNote } from './ai/aiChatsListing';
+import { buildAiChatsListingEntries, formatAiChatsListingNote, resolveRebindTargetFromArg, type AiChatsListingEntry } from './ai/aiChatsListing';
 import { resolveInheritedAIActiveSessionId } from '../domain/aiWorkspaceScopeInherit';
 import { resolveUndoLastTurnBoundary } from '../domain/aiUndoLastTurn';
 import { aiSessionIdSetEqual, exactScopeAISessionsEqual } from '../domain/aiSessionsForScope';
@@ -280,6 +280,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   undoLastTurnInSession,
   deleteSession,
   updateSessionTitle,
+  rebindSessionScope,
   exportSessionsBackup,
   importSessionsBackup,
   updateSessionExternalSessionId,
@@ -334,6 +335,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   // Inline system-style note above the composer (e.g. `/chats` listing).
   // Panel-command output, never agent content.
   const [panelCommandNote, setPanelCommandNote] = useState<string | null>(null);
+  // Entries of the last `/chats` listing; `/rebind <n>` resolves against them.
+  const lastChatsListingRef = useRef<AiChatsListingEntry[]>([]);
   const [isSending, setIsSending] = useState(false);
   // Undo-last-turn is still
   // running. Unlike the send flow this is not reflected in `isSending`, so it
@@ -514,8 +517,13 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     const liveTerminalIds = scopeType === 'workspace' && workspaceMemberTerminalIds
       ? workspaceMemberTerminalIds
       : new Set(scopeTargetId ? [scopeTargetId] : []);
+    // Dangling chats no longer match any live scope (rank 0), so they must be
+    // appended explicitly for the listing — that is where they become visible
+    // and rebindable again (issue #4015 R2).
+    const listedSessionIds = new Set(historySessions.map((session) => session.id));
+    const danglingSessions = sessions.filter((session) => session.scopeDangling && !listedSessionIds.has(session.id));
     const entries = buildAiChatsListingEntries({
-      sessions: historySessions,
+      sessions: [...historySessions, ...danglingSessions],
       activeSessionId,
       externalAgents,
       workspaces,
@@ -524,8 +532,26 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       scopeTargetId,
       t,
     });
+    lastChatsListingRef.current = entries;
     setPanelCommandNote(formatAiChatsListingNote(entries, t));
-  }, [activeSessionId, externalAgents, historySessions, scopeLabel, scopeTargetId, scopeType, t, workspaces, workspaceMemberTerminalIds]);
+  }, [activeSessionId, externalAgents, historySessions, scopeLabel, scopeTargetId, scopeType, sessions, t, workspaces, workspaceMemberTerminalIds]);
+
+  // `/rebind <n>`: rebind the nth dangling chat from the last /chats listing
+  // to this panel's current scope. Panel action — no agent round-trip.
+  const handleRebindChat = useCallback((arg: string) => {
+    if (!scopeTargetId) {
+      toast.warning(t('ai.chat.rebindUnavailable'));
+      return;
+    }
+    const target = resolveRebindTargetFromArg(arg, lastChatsListingRef.current);
+    if (!target) {
+      toast.warning(t('ai.chat.rebindUsage'));
+      return;
+    }
+    rebindSessionScope?.(target.sessionId, { type: scopeType, targetId: scopeTargetId });
+    toast.success(t('ai.chat.rebindDone').replace('{title}', target.title));
+    handleListChats();
+  }, [handleListChats, rebindSessionScope, scopeTargetId, scopeType, t]);
 
   // Manual durability actions (history drawer header). Export writes the
   // whole store to a user-chosen JSON file; import merges by id.
@@ -2138,6 +2164,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         onRenameSession={handleRenameSession}
         onRenameActiveChat={handleRenameSlashCommand}
         onListChats={handleListChats}
+        onRebindChat={handleRebindChat}
         panelCommandNote={panelCommandNote}
         onDismissPanelCommandNote={() => setPanelCommandNote(null)}
         onExportSessions={handleExportSessions}
@@ -2220,6 +2247,7 @@ const AI_CHAT_SIDE_PANEL_AI_STATE_KEYS = [
   'createSession',
   'deleteSession',
   'updateSessionTitle',
+  'rebindSessionScope',
   'updateSessionExternalSessionId',
   'addMessageToSession',
   'updateLastMessage',

@@ -920,6 +920,49 @@ export function useAIState() {
     });
   }, [persistSessions]);
 
+  // Issue #4015 R2: rebind a dangling chat to the panel's current scope.
+  // Rewrites `scope`, clears the dangling marker and makes the chat the
+  // active session of its new scope so it shows in the scoped history again.
+  const rebindSessionScope = useCallback((
+    sessionId: string,
+    scope: { type: 'terminal' | 'workspace'; targetId: string },
+  ) => {
+    const scopeKey = `${scope.type}:${scope.targetId}`;
+    setSessionsRaw(prev => {
+      const next = prev.map(s => {
+        if (s.id !== sessionId) return s;
+        const { scopeDangling: _cleared, ...rest } = s;
+        return {
+          ...rest,
+          scope: { ...s.scope, type: scope.type, targetId: scope.targetId },
+          updatedAt: Date.now(),
+        } as AISession;
+      });
+      setLatestAISessionsSnapshot(next);
+      persistSessions(next);
+      return next;
+    });
+    // Drop stale pointers that still reference this chat under its previous
+    // scope key, then restore the active pointer for the new scope.
+    setActiveSessionIdMapRaw(prev => {
+      let next = prev;
+      for (const [key, id] of Object.entries(prev)) {
+        if (id !== sessionId || key === scopeKey) continue;
+        if (next === prev) next = { ...prev };
+        delete next[key];
+      }
+      if (next[scopeKey] === sessionId) return next;
+      return { ...next, [scopeKey]: sessionId };
+    });
+    const nextMap = {
+      ...(latestAIActiveSessionMapSnapshot ?? {}),
+      [scopeKey]: sessionId,
+    };
+    setLatestAIActiveSessionMapSnapshot(nextMap);
+    localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, nextMap);
+    emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
+  }, [persistSessions]);
+
   // Manual durability escape hatch (issue #4015 follow-up): export the
   // current store to a user-chosen JSON file, or import one back in.
   // Import is an explicit action, so it may overwrite the live store.
@@ -1455,6 +1498,7 @@ export function useAIState() {
     deleteSession,
     deleteSessionsByTarget,
     updateSessionTitle,
+    rebindSessionScope,
     exportSessionsBackup,
     importSessionsBackup,
     updateSessionExternalSessionId,
@@ -1519,6 +1563,7 @@ export function useAIState() {
     deleteSession,
     deleteSessionsByTarget,
     updateSessionTitle,
+    rebindSessionScope,
     exportSessionsBackup,
     importSessionsBackup,
     updateSessionExternalSessionId,

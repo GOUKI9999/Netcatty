@@ -33,6 +33,7 @@ import {
   filterQuickMessages,
   filterSystemSlashCommands,
   filterUserSkillsForSlash,
+  getRebindSlashCommandArg,
   getRenameSlashCommandTitle,
   getSlashCommandItemKey,
   getSystemSlashCommand,
@@ -275,6 +276,8 @@ interface ChatInputProps {
   onRenameSession?: (title: string) => void;
   /** `/chats`: list the chats visible to this panel (panel action, never sent to the agent). */
   onListChats?: () => void;
+  /** `/rebind <n>`: rebind a dangling chat to this panel's scope (panel action, never sent to the agent). */
+  onRebindChat?: (arg: string) => void;
 }
 
 const ChatInput: React.FC<ChatInputProps> = ({
@@ -324,6 +327,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
   parked = false,
   onRenameSession,
   onListChats,
+  onRebindChat,
 }) => {
   const { t } = useI18n();
   const hasTerminalSelectionAttachment = files.some((file) => file.terminalSelection || file.vaultNoteId);
@@ -762,6 +766,16 @@ const ChatInput: React.FC<ChatInputProps> = ({
       }
       if (command === 'stop') onStop?.();
       if (command === 'chats') onListChats?.();
+      if (command === 'rebind') {
+        // Keep the composer so the user can finish typing the dangling chat's
+        // number from the /chats listing.
+        const currentText = readComposerText();
+        if (/^\/rebind$/i.test(currentText.trim())) {
+          commitComposerText(`${currentText.trimEnd()} `);
+        }
+        closeAllMenus();
+        return;
+      }
       if (command === 'rename') {
         commitComposerText(replaceSlashQueryWithRename(readComposerText(), slashRange));
         closeAllMenus();
@@ -989,6 +1003,11 @@ const ChatInput: React.FC<ChatInputProps> = ({
           commitComposerText('');
           return;
         }
+        if (systemCommand === 'rebind') {
+          onRebindChat?.(getRebindSlashCommandArg(submittedText));
+          commitComposerText('');
+          return;
+        }
         return;
       }
       if (isStreaming && canSteer) {
@@ -999,7 +1018,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
       // abort; the parent clears value only after the user message is accepted.
       onSend();
     },
-    [canCompact, canSteer, commitComposerText, isStreaming, onCompact, onListChats, onRenameSession, onSend, onSteer, onStop, readComposerText],
+    [canCompact, canSteer, commitComposerText, isStreaming, onCompact, onListChats, onRebindChat, onRenameSession, onSend, onSteer, onStop, readComposerText],
   );
 
   const status: PromptInputStatus = isStreaming ? 'streaming' : 'idle';

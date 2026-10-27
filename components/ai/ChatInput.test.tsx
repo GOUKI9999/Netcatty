@@ -232,11 +232,18 @@ test('selecting rename completes a partial slash query without sending', () => {
 
 test('slash picker system commands clear the local composer', () => {
   const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
-  // /stop falls through to the shared clear; /rename and /chats have their own
-  // branches above it (rename keeps the composer so the user can type a title).
+  // /stop falls through to the shared clear; /rename, /chats and /rebind have
+  // their own branches above it (rename/rebind keep the composer so the user
+  // can type an argument).
   assert.match(source, /if \(command === 'stop'\) onStop\?\.\(\);[\s\S]*?commitComposerText\(''\);/);
   assert.match(source, /if \(command === 'chats'\) onListChats\?\.\(\);/);
   assert.match(source, /if \(command === 'rename'\) \{[\s\S]*?closeAllMenus\(\);[\s\S]*?return;/);
+  assert.match(source, /if \(command === 'rebind'\) \{[\s\S]*?closeAllMenus\(\);[\s\S]*?return;/);
+});
+
+test('/rebind routes its argument to onRebindChat as a panel action', () => {
+  const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
+  assert.match(source, /if \(systemCommand === 'rebind'\) \{[\s\S]*?onRebindChat\?\.\(getRebindSlashCommandArg\(submittedText\)\);/);
 });
 
 test('keeps thinking on a separate chip instead of mixing it into the model list', () => {

@@ -6,6 +6,7 @@ import {
   buildAiChatsListingEntries,
   formatAiChatsListingNote,
   resolveChatAgentLabel,
+  resolveRebindTargetFromArg,
   truncateChatTitle,
 } from './aiChatsListing.ts';
 
@@ -67,6 +68,21 @@ test('/chats listing marks the live workspace chat, terminal chat and dangling c
   assert.equal(entries[2].scopeLabel, 'ai.chat.chatsScopeDangling');
 });
 
+test('/chats listing numbers dangling entries for /rebind and leaves live ones unnumbered', () => {
+  const sessions = [
+    createSession('s-dangling-a', { scope: { type: 'workspace', targetId: 'ws-gone-a' } }),
+    createSession('s-live', { scope: { type: 'workspace', targetId: 'ws-1' } }),
+    createSession('s-dangling-b', { scope: { type: 'terminal', targetId: 'term-gone' } }),
+    createSession('s-dangling-c', { scope: { type: 'workspace', targetId: 'ws-gone-b' } }),
+  ];
+
+  const entries = buildEntries(sessions, null);
+  assert.deepEqual(
+    entries.map((entry) => entry.rebindNumber ?? 0),
+    [1, 0, 2, 3],
+  );
+});
+
 test('/chats listing falls back to the panel scope label for the current workspace', () => {
   const sessions = [
     createSession('s-live', { scope: { type: 'workspace', targetId: 'ws-1' } }),
@@ -95,11 +111,43 @@ test('/chats note renders header, current marker and one line per chat', () => {
   const note = formatAiChatsListingNote(entries, t);
   const lines = note.split('\n');
   assert.equal(lines[0], 'ai.chat.chatsHeader');
-  assert.equal(lines.length, 4);
+  // Three chat lines plus the dangling rebind hint.
+  assert.equal(lines.length, 5);
   assert.match(lines[1], /^• Fix deploy — Catty Agent · /);
   assert.match(lines[2], /^ {2}Logs — Claude Code · /);
   assert.match(lines[3], /ai\.chat\.chatsScopeDangling/);
   assert.ok(!lines[3].startsWith('•'));
+  // The dangling line carries an inline rebind affordance, and the note
+  // explains it.
+  assert.match(lines[3], /\/rebind 1/);
+  assert.equal(lines[4], 'ai.chat.chatsRebindHint');
+});
+
+test('/chats note omits the rebind hint when nothing is dangling', () => {
+  const sessions = [
+    createSession('s-live', { title: 'Fix deploy' }),
+    createSession('s-term', { title: 'Logs', scope: { type: 'terminal', targetId: 'term-1' }, agentId: 'claude' }),
+  ];
+  const entries = buildEntries(sessions);
+  const note = formatAiChatsListingNote(entries, t);
+  assert.ok(!note.includes('rebind'));
+});
+
+test('resolveRebindTargetFromArg picks only dangling entries by their number', () => {
+  const sessions = [
+    createSession('s-live', { title: 'Fix deploy' }),
+    createSession('s-dangling', { title: 'Old', scope: { type: 'workspace', targetId: 'ws-gone' } }),
+  ];
+  const entries = buildEntries(sessions);
+  const dangling = entries.find((entry) => entry.isDangling);
+  assert.ok(dangling);
+
+  assert.equal(resolveRebindTargetFromArg('1', entries)?.sessionId, 's-dangling');
+  assert.equal(resolveRebindTargetFromArg(' 2 ', entries), null);
+  assert.equal(resolveRebindTargetFromArg('0', entries), null);
+  assert.equal(resolveRebindTargetFromArg('abc', entries), null);
+  // A live entry is not rebindable even if its position would match.
+  assert.equal(resolveRebindTargetFromArg('1', [entries[0]]), null);
 });
 
 test('/chats note reports an empty panel', () => {

@@ -596,6 +596,7 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
                     undoLastTurnInSession={aiConfig.undoLastTurnInSession}
                     deleteSession={aiConfig.deleteSession}
                     updateSessionTitle={aiConfig.updateSessionTitle}
+                    rebindSessionScope={aiConfig.rebindSessionScope}
                     updateSessionExternalSessionId={aiConfig.updateSessionExternalSessionId}
                     addMessageToSession={aiConfig.addMessageToSession}
                     updateLastMessage={aiConfig.updateLastMessage}

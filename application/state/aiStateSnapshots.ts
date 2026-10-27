@@ -20,7 +20,7 @@ import {
 } from './aiDraftState';
 import {
   pruneInactiveScopedSessions,
-  pruneInactiveScopedTransientState,
+  pruneInactiveScopedState,
 } from './aiScopeCleanup';
 import { emitAIStateChanged } from './aiStateEvents';
 import { getAgentRuntime } from '../../infrastructure/ai/harness/globalAgentRuntime';
@@ -117,65 +117,62 @@ export function cleanupOrphanedAISessions(activeTargetIds: Set<string>) {
     cleanupSdkAgentSessions(nextSessionCleanup.orphanedSessionIds);
   }
 
-  if (nextSessionCleanup.sessions !== currentSessions) {
-    setLatestAISessionsSnapshot(nextSessionCleanup.sessions);
-    writeSessionsForStorage(nextSessionCleanup.sessions);
+  // Issue #4015 R2: a dropped chat is recoverable now, so mark it dangling
+  // instead of stripping its record or pointer. `/chats` lists dangling chats
+  // with a rebind affordance; the flag clears when the chat is rebound or its
+  // scope target becomes live again.
+  const orphanedIds = new Set(nextSessionCleanup.orphanedSessionIds);
+  let sessionsMarked = false;
+  const markedSessions = currentSessions.map((session) => {
+    if (orphanedIds.has(session.id)) {
+      if (session.scopeDangling) return session;
+      sessionsMarked = true;
+      return { ...session, scopeDangling: true };
+    }
+    if (
+      session.scopeDangling
+      && (!session.scope.targetId || activeTargetIds.has(session.scope.targetId))
+    ) {
+      sessionsMarked = true;
+      const { scopeDangling: _cleared, ...rest } = session;
+      return rest as AISession;
+    }
+    return session;
+  });
+
+  if (sessionsMarked) {
+    setLatestAISessionsSnapshot(markedSessions);
+    writeSessionsForStorage(markedSessions);
     emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
   }
 
-  const activeSessionIdMap = preCleanupActiveSessionMap;
-  let activeSessionMapChanged = false;
-  const nextActiveSessionIdMap = { ...activeSessionIdMap };
-
-  for (const scopeKey of Object.keys(activeSessionIdMap)) {
-    if (isScopeKeyActive(scopeKey, activeTargetIds)) continue;
-    delete nextActiveSessionIdMap[scopeKey];
-    activeSessionMapChanged = true;
-  }
-
-  if (activeSessionMapChanged) {
-    setLatestAIActiveSessionMapSnapshot(nextActiveSessionIdMap);
-    localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, nextActiveSessionIdMap);
-    emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
-  }
-
-  const currentActiveSessionIdMap = activeSessionMapChanged
-    ? nextActiveSessionIdMap
-    : activeSessionIdMap;
+  // Issue #4015 R2: keep active-pointer entries for scopes whose target
+  // closed. Clearing them used to make dangling chats invisible (rank 0) and
+  // unrecoverable from the UI; the pointer is rewritten on rebind instead.
   const currentDraftsByScope = latestAIDraftsByScopeSnapshot ?? {};
   const currentPanelViewByScope = latestAIPanelViewByScopeSnapshot ?? {};
-  const prunedScopedTransientState = pruneInactiveScopedTransientState(
-    currentActiveSessionIdMap,
+  const prunedScopedState = pruneInactiveScopedState(
     currentDraftsByScope,
     currentPanelViewByScope,
     activeTargetIds,
   );
 
-  if (prunedScopedTransientState.activeSessionIdMap !== currentActiveSessionIdMap) {
-    setLatestAIActiveSessionMapSnapshot(prunedScopedTransientState.activeSessionIdMap);
-    localStorageAdapter.write(
-      STORAGE_KEY_AI_ACTIVE_SESSION_MAP,
-      prunedScopedTransientState.activeSessionIdMap,
-    );
-    emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
-  }
-
-  if (prunedScopedTransientState.draftsByScope !== currentDraftsByScope) {
+  if (prunedScopedState.draftsByScope !== currentDraftsByScope) {
     for (const scopeKey of Object.keys(currentDraftsByScope)) {
-      if (scopeKey in prunedScopedTransientState.draftsByScope) continue;
+      if (scopeKey in prunedScopedState.draftsByScope) continue;
       bumpDraftMutationVersion(scopeKey);
       bumpDraftUploadGeneration(scopeKey);
     }
-    setLatestAIDraftsByScopeSnapshot(prunedScopedTransientState.draftsByScope);
+    setLatestAIDraftsByScopeSnapshot(prunedScopedState.draftsByScope);
     emitAIStateChanged(AI_STATE_CHANGED_DRAFTS_BY_SCOPE);
   }
 
-  if (prunedScopedTransientState.panelViewByScope !== currentPanelViewByScope) {
+  if (prunedScopedState.panelViewByScope !== currentPanelViewByScope) {
     for (const scopeKey of Object.keys(currentPanelViewByScope)) {
-      if (scopeKey in prunedScopedTransientState.panelViewByScope) continue;
+      if (scopeKey in prunedScopedState.panelViewByScope) continue;
       bumpDraftMutationVersion(scopeKey);
     }
-    setLatestAIPanelViewByScopeSnapshot(prunedScopedTransientState.panelViewByScope);
+    setLatestAIPanelViewByScopeSnapshot(prunedScopedState.panelViewByScope);
     emitAIStateChanged(AI_STATE_CHANGED_PANEL_VIEW_BY_SCOPE);
   }
 }
