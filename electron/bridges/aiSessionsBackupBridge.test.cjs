@@ -104,6 +104,44 @@ test("readLatestGeneration skips arrays without usable sessions", () => {
   }
 });
 
+test("readLatestGeneration treats an empty generation as an authoritative wipe", () => {
+  const dir = makeTempDir();
+  bridge.__internals._setBackupDir(dir);
+  try {
+    const newestFile = "ai-sessions-20260102T000000-000Z.json";
+    fs.writeFileSync(path.join(dir, "ai-sessions-20260101T000000-000Z.json"), JSON.stringify([session]));
+    fs.writeFileSync(path.join(dir, newestFile), "[]");
+
+    const latest = bridge.__internals.readLatestGeneration();
+    assert.equal(latest.ok, true);
+    assert.equal(latest.file, newestFile);
+    assert.deepEqual(JSON.parse(latest.json), []);
+  } finally {
+    bridge.__internals._setBackupDir(null);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("readLatestGeneration skips sessions with malformed messages", () => {
+  const dir = makeTempDir();
+  bridge.__internals._setBackupDir(dir);
+  try {
+    const olderFile = "ai-sessions-20260101T000000-000Z.json";
+    const newestFile = "ai-sessions-20260102T000000-000Z.json";
+    fs.writeFileSync(path.join(dir, olderFile), JSON.stringify([session]));
+    for (const message of [null, {}, { id: "m", role: "user", content: "hello", timestamp: null }]) {
+      fs.writeFileSync(path.join(dir, newestFile), JSON.stringify([{ ...session, messages: [message] }]));
+      const latest = bridge.__internals.readLatestGeneration();
+      assert.equal(latest.ok, true);
+      assert.equal(latest.file, olderFile);
+      assert.deepEqual(JSON.parse(latest.json), [session]);
+    }
+  } finally {
+    bridge.__internals._setBackupDir(null);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("writeGeneration rejects invalid or oversized payloads", () => {
   const dir = makeTempDir();
   bridge.__internals._setBackupDir(dir);

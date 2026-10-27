@@ -139,6 +139,8 @@ function readLatestGeneration() {
       const parsed = JSON.parse(json);
       // Structurally unusable payloads can fall back to an older session array.
       if (!Array.isArray(parsed)) continue;
+      // An empty array is an intentional wipe and must not resurrect older chats.
+      if (parsed.length === 0) return { ok: true, json, file };
       if (!parsed.some((entry) => (
         entry !== null && typeof entry === "object"
         && typeof entry.id === "string"
@@ -147,6 +149,13 @@ function readLatestGeneration() {
         && entry.scope !== null && typeof entry.scope === "object"
         && typeof entry.scope.type === "string"
         && Array.isArray(entry.messages)
+        && entry.messages.every((message) => (
+          message !== null && typeof message === "object"
+          && typeof message.id === "string"
+          && typeof message.role === "string"
+          && typeof message.content === "string"
+          && typeof message.timestamp === "number" && Number.isFinite(message.timestamp)
+        ))
         && typeof entry.updatedAt === "number" && Number.isFinite(entry.updatedAt)
       ))) continue;
       return { ok: true, json, file };
