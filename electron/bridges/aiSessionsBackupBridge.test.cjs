@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const bridge = require("./aiSessionsBackupBridge.cjs");
+const session = { id: "s1", title: "Session", agentId: "agent", scope: { type: "global" }, messages: [], updatedAt: 1 };
 
 function makeTempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-ai-backup-"));
@@ -45,11 +46,11 @@ test("readLatestGeneration skips corrupt generations and reads the newest parsea
     fs.writeFileSync(path.join(dir, "ai-sessions-20260101T000000-000Z.json"), "not json");
     fs.writeFileSync(
       path.join(dir, "ai-sessions-20260102T000000-000Z.json"),
-      JSON.stringify([{ id: "s1" }]),
+      JSON.stringify([session]),
     );
     const latest = bridge.__internals.readLatestGeneration();
     assert.equal(latest.ok, true);
-    assert.deepEqual(JSON.parse(latest.json), [{ id: "s1" }]);
+    assert.deepEqual(JSON.parse(latest.json), [session]);
     // A corrupt-only directory reports failure instead of throwing.
     const corruptOnly = makeTempDir();
     bridge.__internals._setBackupDir(corruptOnly);
@@ -71,7 +72,7 @@ test("readLatestGeneration skips non-array generations", () => {
   bridge.__internals._setBackupDir(dir);
   try {
     const olderFile = "ai-sessions-20260101T000000-000Z.json";
-    const sessions = [{ id: "s1" }];
+    const sessions = [session];
     fs.writeFileSync(path.join(dir, olderFile), JSON.stringify(sessions));
     fs.writeFileSync(path.join(dir, "ai-sessions-20260102T000000-000Z.json"), JSON.stringify({ sessions }));
 
@@ -79,6 +80,24 @@ test("readLatestGeneration skips non-array generations", () => {
     assert.equal(latest.ok, true);
     assert.equal(latest.file, olderFile);
     assert.deepEqual(JSON.parse(latest.json), sessions);
+  } finally {
+    bridge.__internals._setBackupDir(null);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("readLatestGeneration skips arrays without usable sessions", () => {
+  const dir = makeTempDir();
+  bridge.__internals._setBackupDir(dir);
+  try {
+    const olderFile = "ai-sessions-20260101T000000-000Z.json";
+    fs.writeFileSync(path.join(dir, olderFile), JSON.stringify([session]));
+    fs.writeFileSync(path.join(dir, "ai-sessions-20260102T000000-000Z.json"), JSON.stringify([{ id: "bad" }]));
+
+    const latest = bridge.__internals.readLatestGeneration();
+    assert.equal(latest.ok, true);
+    assert.equal(latest.file, olderFile);
+    assert.deepEqual(JSON.parse(latest.json), [session]);
   } finally {
     bridge.__internals._setBackupDir(null);
     fs.rmSync(dir, { recursive: true, force: true });

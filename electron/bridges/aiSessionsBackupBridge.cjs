@@ -139,6 +139,16 @@ function readLatestGeneration() {
       const parsed = JSON.parse(json);
       // Structurally unusable payloads can fall back to an older session array.
       if (!Array.isArray(parsed)) continue;
+      if (!parsed.some((entry) => (
+        entry !== null && typeof entry === "object"
+        && typeof entry.id === "string"
+        && typeof entry.title === "string"
+        && typeof entry.agentId === "string"
+        && entry.scope !== null && typeof entry.scope === "object"
+        && typeof entry.scope.type === "string"
+        && Array.isArray(entry.messages)
+        && typeof entry.updatedAt === "number" && Number.isFinite(entry.updatedAt)
+      ))) continue;
       return { ok: true, json, file };
     } catch {
       // try the next older generation

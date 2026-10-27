@@ -207,6 +207,7 @@ export function useAIState() {
         setLatestAISessionsSnapshot(restored);
         setSessionsRaw(prev => (prev.length > 0 ? prev : restored));
         writeSessionsForStorage(restored);
+        emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
         console.info(
           `[AIState] Restored ${restored.length} AI session(s) from the disk backup.`,
         );
