@@ -24,7 +24,7 @@ import {
 } from './aiScopeCleanup';
 import { emitAIStateChanged } from './aiStateEvents';
 import { getAgentRuntime } from '../../infrastructure/ai/harness/globalAgentRuntime';
-import { DebouncedBackupMirror } from './aiSessionsBackup';
+import { DebouncedBackupMirror, readLiveSessionsArray } from './aiSessionsBackup';
 
 /** Typed accessor for the Electron IPC bridge exposed on `window.netcatty`. */
 export interface AIBridge {
@@ -88,10 +88,13 @@ function isScopeKeyActive(scopeKey: string, activeTargetIds: Set<string>) {
   return activeTargetIds.has(targetId);
 }
 
+/** Last live terminal/workspace target ids observed by orphan cleanup. */
+export let latestAIActiveTargetIdsSnapshot: Set<string> = new Set();
+
 export function cleanupOrphanedAISessions(activeTargetIds: Set<string>) {
+  latestAIActiveTargetIdsSnapshot = activeTargetIds;
   const currentSessions = latestAISessionsSnapshot
-    ?? localStorageAdapter.read<AISession[]>(STORAGE_KEY_AI_SESSIONS)
-    ?? [];
+    ?? readLiveSessionsArray(localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS));
 
   // Sessions shown by a still-live scope must be protected from cleanup
   // even when their own `scope.targetId` points at a closed terminal —

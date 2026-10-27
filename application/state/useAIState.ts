@@ -64,6 +64,7 @@ import {
   bumpDraftUploadGeneration,
   cleanupDeletedAIChatSessions,
   cleanupOrphanedAISessions,
+  latestAIActiveTargetIdsSnapshot,
   getAIBridge,
   flushBackupMirror,
   getDraftUploadGeneration,
@@ -998,6 +999,22 @@ export function useAIState() {
     setLatestAISessionsSnapshot(persisted);
     setSessionsRaw(persisted);
     emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
+    // Import does not change live terminals/workspaces, so the orphan-cleanup
+    // effect will not run. Reuse the last known live target set to mark chats
+    // bound to missing scopes as dangling so /chats can offer /rebind.
+    if (latestAIActiveTargetIdsSnapshot.size > 0) {
+      cleanupOrphanedAISessions(latestAIActiveTargetIdsSnapshot);
+      const nextSessions =
+        latestAISessionsSnapshot
+        ?? readLiveSessionsArray(localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS));
+      sessionsRef.current = nextSessions;
+      setSessionsRaw(nextSessions);
+      setActiveSessionIdMapRaw(
+        latestAIActiveSessionMapSnapshot
+          ?? localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP)
+          ?? {},
+      );
+    }
     return persisted.filter(session => importedIds.has(session.id)).length;
   }, []);
 
