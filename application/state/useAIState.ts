@@ -73,6 +73,7 @@ import {
   latestAISessionsSnapshot,
   prepareRestoredSessions,
   scheduleBackupMirror,
+  rebindActiveSessionMap,
   writeSessionsForStorage,
   setLatestAIActiveSessionMapSnapshot,
   setLatestAIDraftsByScopeSnapshot,
@@ -944,22 +945,18 @@ export function useAIState() {
     });
     // Drop stale pointers that still reference this chat under its previous
     // scope key, then restore the active pointer for the new scope.
+    // Persist the same cleaned map the React updater returns (mirrors
+    // setActiveSessionId) — rebuilding from latestAIActiveSessionMapSnapshot
+    // would resurrect the stale old-scope pointer in localStorage / peers.
+    let nextActiveSessionIdMap: Record<string, string | null> | null = null;
     setActiveSessionIdMapRaw(prev => {
-      let next = prev;
-      for (const [key, id] of Object.entries(prev)) {
-        if (id !== sessionId || key === scopeKey) continue;
-        if (next === prev) next = { ...prev };
-        delete next[key];
-      }
-      if (next[scopeKey] === sessionId) return next;
-      return { ...next, [scopeKey]: sessionId };
+      const next = rebindActiveSessionMap(prev, sessionId, scopeKey);
+      nextActiveSessionIdMap = next;
+      return next;
     });
-    const nextMap = {
-      ...(latestAIActiveSessionMapSnapshot ?? {}),
-      [scopeKey]: sessionId,
-    };
-    setLatestAIActiveSessionMapSnapshot(nextMap);
-    localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, nextMap);
+    if (!nextActiveSessionIdMap) return;
+    setLatestAIActiveSessionMapSnapshot(nextActiveSessionIdMap);
+    localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, nextActiveSessionIdMap);
     emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
   }, [persistSessions]);
 

@@ -16,6 +16,7 @@ import {
   latestAISessionsSnapshot,
   setLatestAIActiveSessionMapSnapshot,
   setLatestAISessionsSnapshot,
+  rebindActiveSessionMap,
 } from './aiStateSnapshots';
 
 test('orphan cleanup keeps durable Catty output while explicit deletion removes it', async () => {
@@ -930,4 +931,25 @@ test('successful store writes schedule a throttled disk backup mirror', async (t
       value: previousWindow,
     });
   }
+});
+
+test('rebindActiveSessionMap drops stale pointers and sets the new scope', () => {
+  const cleaned = rebindActiveSessionMap(
+    {
+      'terminal:old-ws': 'chat-1',
+      'terminal:other': 'chat-2',
+      'workspace:keep': 'chat-1',
+    },
+    'chat-1',
+    'terminal:new-ws',
+  );
+  assert.deepEqual(cleaned, {
+    'terminal:other': 'chat-2',
+    'terminal:new-ws': 'chat-1',
+  });
+  // Idempotent when already bound to the target scope with no other pointers.
+  assert.deepEqual(
+    rebindActiveSessionMap({ 'terminal:new-ws': 'chat-1' }, 'chat-1', 'terminal:new-ws'),
+    { 'terminal:new-ws': 'chat-1' },
+  );
 });

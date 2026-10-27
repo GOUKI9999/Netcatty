@@ -578,6 +578,28 @@ export let latestAIPanelViewByScopeSnapshot: PanelViewByScope | null = null;
 let latestAIDraftMutationVersionByScopeSnapshot: Record<string, number> = {};
 let latestAIDraftUploadGenerationByScopeSnapshot: Record<string, number> = {};
 
+
+/**
+ * Issue #4015 R2: rewrite the active-session map when rebinding a dangling
+ * chat. Drops every pointer that still names `sessionId` under a different
+ * scope key, then sets the new scope as active. Callers must persist and
+ * publish the returned map (do not rebuild from a stale snapshot).
+ */
+export function rebindActiveSessionMap(
+  activeSessionIdMap: Record<string, string | null>,
+  sessionId: string,
+  scopeKey: string,
+): Record<string, string | null> {
+  let next = activeSessionIdMap;
+  for (const [key, id] of Object.entries(activeSessionIdMap)) {
+    if (id !== sessionId || key === scopeKey) continue;
+    if (next === activeSessionIdMap) next = { ...activeSessionIdMap };
+    delete next[key];
+  }
+  if (next[scopeKey] === sessionId) return next;
+  return { ...next, [scopeKey]: sessionId };
+}
+
 export function setLatestAISessionsSnapshot(sessions: AISession[]) {
   latestAISessionsSnapshot = sessions;
 }
