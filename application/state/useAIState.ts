@@ -69,6 +69,7 @@ import {
   latestAIDraftsByScopeSnapshot,
   latestAIPanelViewByScopeSnapshot,
   latestAISessionsSnapshot,
+  pruneSessionsForStorage,
   writeSessionsForStorage,
   setLatestAIActiveSessionMapSnapshot,
   setLatestAIDraftsByScopeSnapshot,
@@ -77,6 +78,11 @@ import {
   type DraftsByScope,
   type PanelViewByScope,
 } from './aiStateSnapshots';
+import {
+  isEmptySessionsStore,
+  mergeImportedSessions,
+  parseBackupSessions,
+} from './aiSessionsBackup';
 import { AI_STATE_CHANGED_EVENT, emitAIStateChanged } from './aiStateEvents';
 import {
   persistCommandBlocklistSetting,
@@ -171,6 +177,46 @@ export function useAIState() {
       ?? localStorageAdapter.read<AISession[]>(STORAGE_KEY_AI_SESSIONS)
       ?? []
   );
+  // Durability restore (issue #4015 follow-up): when the live localStorage
+  // store is missing or empty but a disk backup generation exists, restore
+  // sessions from the newest backup. The asymmetry below is deliberate:
+  // empty -> restore, non-empty -> leave alone. Restoring on top of a
+  // non-empty store would resurrect chats the user explicitly deleted
+  // (deletions persist through the mirror, so an empty live store plus a
+  // non-empty backup can only mean the profile/store was wiped externally —
+  // exactly the failure mode this recovers from).
+  useEffect(() => {
+    if (latestAISessionsSnapshot && latestAISessionsSnapshot.length > 0) return;
+    const bridge = getAIBridge();
+    if (!bridge?.aiSessionsBackupReadLatest) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const liveRaw = localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS);
+        if (!isEmptySessionsStore(liveRaw)) return;
+        const backup = await bridge.aiSessionsBackupReadLatest?.();
+        if (cancelled || !backup?.ok) return;
+        // Re-check after the async gap: a session may have been created
+        // while the backup was being read; never restore over live state.
+        if (!isEmptySessionsStore(localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS))) {
+          return;
+        }
+        const restored = pruneSessionsForStorage(parseBackupSessions(backup.json) ?? []);
+        if (restored.length === 0) return;
+        setLatestAISessionsSnapshot(restored);
+        setSessionsRaw(prev => (prev.length > 0 ? prev : restored));
+        writeSessionsForStorage(restored);
+        console.info(
+          `[AIState] Restored ${restored.length} AI session(s) from the disk backup.`,
+        );
+      } catch {
+        // Backup restore must never break startup.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   // Ref that always holds the latest sessions for use inside debounced callbacks
   const sessionsRef = useRef(sessions);
   useEffect(() => {
@@ -866,6 +912,34 @@ export function useAIState() {
     });
   }, [persistSessions]);
 
+  // Manual durability escape hatch (issue #4015 follow-up): export the
+  // current store to a user-chosen JSON file, or import one back in.
+  // Import is an explicit action, so it may overwrite the live store.
+  const exportSessionsBackup = useCallback(async (): Promise<string | null> => {
+    const bridge = getAIBridge();
+    if (!bridge?.aiSessionsBackupExport) return null;
+    const result = await bridge.aiSessionsBackupExport({
+      json: JSON.stringify(sessionsRef.current),
+    });
+    return result?.success ? (result.filePath ?? '') : null;
+  }, []);
+
+  const importSessionsBackup = useCallback(async (): Promise<number> => {
+    const bridge = getAIBridge();
+    if (!bridge?.aiSessionsBackupImport) return 0;
+    const result = await bridge.aiSessionsBackupImport();
+    if (!result?.success || !result.json) return 0;
+    const imported = parseBackupSessions(result.json);
+    if (!imported || imported.length === 0) return 0;
+    setSessionsRaw(prev => {
+      const next = mergeImportedSessions(prev, imported);
+      setLatestAISessionsSnapshot(next);
+      persistSessions(next);
+      return next;
+    });
+    return imported.length;
+  }, [persistSessions]);
+
   const updateSessionExternalSessionId = useCallback((sessionId: string, externalSessionId: string | undefined) => {
     setSessionsRaw(prev => {
       const next = prev.map(s => (
@@ -1370,6 +1444,8 @@ export function useAIState() {
     deleteSession,
     deleteSessionsByTarget,
     updateSessionTitle,
+    exportSessionsBackup,
+    importSessionsBackup,
     updateSessionExternalSessionId,
     addMessageToSession,
     updateLastMessage,
@@ -1432,6 +1508,8 @@ export function useAIState() {
     deleteSession,
     deleteSessionsByTarget,
     updateSessionTitle,
+    exportSessionsBackup,
+    importSessionsBackup,
     updateSessionExternalSessionId,
     addMessageToSession,
     updateLastMessage,

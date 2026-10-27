@@ -1707,6 +1707,16 @@ function createPreloadApi(ctx) {
   openCrashLogsDir: () =>
     ipcRenderer.invoke("netcatty:crashLogs:openDir"),
 
+  // AI Sessions Backup (disk mirror of the AI chat session store)
+  aiSessionsBackupWrite: (json) =>
+    ipcRenderer.invoke("netcatty:aiSessionsBackup:write", { json }),
+  aiSessionsBackupReadLatest: () =>
+    ipcRenderer.invoke("netcatty:aiSessionsBackup:readLatest"),
+  aiSessionsBackupExport: (json) =>
+    ipcRenderer.invoke("netcatty:aiSessionsBackup:export", { json }),
+  aiSessionsBackupImport: () =>
+    ipcRenderer.invoke("netcatty:aiSessionsBackup:import"),
+
   // Global Toggle Hotkey (Quake Mode)
   registerGlobalHotkey: (hotkey) =>
     ipcRenderer.invoke("netcatty:globalHotkey:register", { hotkey }),
