@@ -522,7 +522,7 @@ export function __resetBackupMirrorForTests() {
   backupMirror.reset();
 }
 
-function scheduleBackupMirror(json: string) {
+export function scheduleBackupMirror(json: string) {
   try {
     backupMirror.schedule(json);
   } catch {

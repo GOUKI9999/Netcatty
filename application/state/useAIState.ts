@@ -72,6 +72,7 @@ import {
   latestAIPanelViewByScopeSnapshot,
   latestAISessionsSnapshot,
   prepareRestoredSessions,
+  scheduleBackupMirror,
   writeSessionsForStorage,
   setLatestAIActiveSessionMapSnapshot,
   setLatestAIDraftsByScopeSnapshot,
@@ -186,6 +187,11 @@ export function useAIState() {
     return () => window.removeEventListener('beforeunload', flushBackupMirror);
   }, []);
   useEffect(() => {
+    const liveRaw = localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS);
+    if (!isMissingOrCorruptSessionsStore(liveRaw)) {
+      if (readLiveSessionsArray(liveRaw).length > 0 && liveRaw != null) scheduleBackupMirror(liveRaw);
+      return;
+    }
     if (latestAISessionsSnapshot && latestAISessionsSnapshot.length > 0) return;
     const bridge = getAIBridge();
     if (!bridge?.aiSessionsBackupReadLatest) return;
@@ -933,14 +939,16 @@ export function useAIState() {
     if (!result?.success || !result.json) return 0;
     const imported = parseBackupSessions(result.json);
     if (!imported || imported.length === 0) return 0;
-    setSessionsRaw(prev => {
-      const next = mergeImportedSessions(prev, imported);
-      setLatestAISessionsSnapshot(next);
-      persistSessions(next);
-      return next;
-    });
-    return imported.length;
-  }, [persistSessions]);
+    const syncEnabled = !!localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled;
+    const next = prepareRestoredSessions(mergeImportedSessions(sessionsRef.current, imported), syncEnabled);
+    if (!writeSessionsForStorage(next)) return 0;
+    const persisted = readLiveSessionsArray(localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS));
+    const importedIds = new Set(imported.map(session => session.id));
+    sessionsRef.current = persisted;
+    setLatestAISessionsSnapshot(persisted);
+    setSessionsRaw(persisted);
+    return persisted.filter(session => importedIds.has(session.id)).length;
+  }, []);
 
   const updateSessionExternalSessionId = useCallback((sessionId: string, externalSessionId: string | undefined) => {
     setSessionsRaw(prev => {
