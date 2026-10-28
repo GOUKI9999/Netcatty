@@ -117,3 +117,54 @@ test('worker-owned SSH sessions resolve prompt readiness through the terminal wo
   assert.equal(inspections, 2);
 });
 
+test('a hung worker readiness probe times out and lets the recovery loop reach its deadline machinery', async (t) => {
+  const bridge = require('./mcpServerBridge.cjs');
+  t.after(() => bridge.cleanup());
+  // Synthetic regression for the unresolved P2: a live-but-unresponsive
+  // worker left `await terminalWorkerManager.request` pending forever, so
+  // recovery hung inside ctx.inspect and never reached its 20s deadline or
+  // released the session's running lock. The probe must be bounded instead.
+  bridge.init({
+    sessions: new Map(),
+    electronModule: null,
+    terminalWorkerManager: {
+      request(channel) {
+        if (channel === 'netcatty:ai:shellReadiness') {
+          // Never settles, like a hung-but-live worker process.
+          return new Promise(() => {});
+        }
+        return Promise.reject(new Error(`unexpected worker request: ${channel}`));
+      },
+    },
+  });
+  bridge.setPermissionMode('auto');
+  bridge.updateSessionMetadata([{ sessionId: 'worker-hang', protocol: 'ssh', connected: true }], 'hang-chat');
+  let inspections = 0;
+  bridge.setVaultAgentInvoker(async (op, params) => {
+    assert.equal(op, 'session.inspectRecovery');
+    assert.equal(params.sessionId, 'worker-hang');
+    inspections++;
+    if (inspections === 1) return { ok: true, status: 'connected' };
+    // Short-circuit the retry loop on the second pass: reaching this proves
+    // the loop survived the hung probe instead of stalling inside it.
+    return { ok: false, error: 'synthetic stop' };
+  });
+  const startedAt = Date.now();
+  const result = await bridge.dispatchBuiltinRpc('session/recover', { sessionId: 'worker-hang', chatSessionId: 'hang-chat' });
+  const elapsed = Date.now() - startedAt;
+  assert.equal(result.ok, false);
+  assert.match(result.error, /synthetic stop/);
+  // The probe held for its timeout bound before yielding an unknown state.
+  assert.ok(elapsed >= 1900, `recovery settled too early (${elapsed}ms): probe timeout did not engage`);
+  // It did not hang: the loop reached its next inspection (~probe timeout + 1s backoff).
+  assert.ok(elapsed < 15000, `recovery hung for ${elapsed}ms`);
+  assert.equal(inspections, 2);
+  // The running lock must be released: a follow-up recovery proceeds at once.
+  const secondStartedAt = Date.now();
+  const second = await bridge.dispatchBuiltinRpc('session/recover', { sessionId: 'worker-hang', chatSessionId: 'hang-chat' });
+  assert.equal(second.ok, false);
+  assert.match(second.error, /synthetic stop/);
+  assert.ok(Date.now() - secondStartedAt < 1500, 'running lock was not released after the timeout');
+  assert.equal(inspections, 3);
+});
+

@@ -1611,10 +1611,28 @@ function reportOpenedSessionActivity(event = {}) {
 // tracking state) lives in the worker, so the main-process `sessions` map is
 // empty for it. Ask the owning worker for read-only prompt readiness. A miss
 // or a worker failure yields null: an unknown state must never report ready.
+// The probe is bounded well below the 20s recovery budget so a live-but-
+// unresponsive worker cannot hang inspectRecovery past the recovery loop's
+// deadline/cancel machinery.
+const WORKER_SHELL_READINESS_TIMEOUT_MS = 2000;
+
 async function queryWorkerShellReadiness(sessionId, status) {
   if (status !== "connected" || !terminalWorkerManager?.request) return null;
+  // terminalWorkerManager.request has no cancellation support, so the probe
+  // cannot be aborted once posted. Race it against a timeout instead: a late
+  // worker response settles into an abandoned promise (fire-and-forget) and
+  // never mutates state after the timeout decision.
+  let timeoutId;
   try {
-    const result = await terminalWorkerManager.request("netcatty:ai:shellReadiness", { sessionId }, {});
+    const result = await Promise.race([
+      terminalWorkerManager.request("netcatty:ai:shellReadiness", { sessionId }, {}),
+      new Promise((resolve) => {
+        timeoutId = setTimeout(
+          () => resolve(null),
+          WORKER_SHELL_READINESS_TIMEOUT_MS,
+        );
+      }),
+    ]);
     if (result?.ok !== true || result.found !== true) return null;
     return {
       trackedShell: result.trackedShell === true,
@@ -1622,6 +1640,8 @@ async function queryWorkerShellReadiness(sessionId, status) {
     };
   } catch {
     return null;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
