@@ -124,7 +124,9 @@ export function resolveRebindTargetFromArg(
   arg: string,
   entries: AiChatsListingEntry[],
 ): AiChatsListingEntry | null {
-  const index = Number.parseInt(arg.trim(), 10);
+  const trimmed = arg.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const index = Number.parseInt(trimmed, 10);
   if (!Number.isInteger(index) || index < 1) return null;
   const dangling = entries.filter((entry) => entry.isDangling);
   return dangling[index - 1] ?? null;

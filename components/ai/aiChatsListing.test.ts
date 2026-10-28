@@ -147,14 +147,20 @@ test('resolveRebindTargetFromArg picks only dangling entries by their number', (
   const sessions = [
     createSession('s-live', { title: 'Fix deploy' }),
     createSession('s-dangling', { title: 'Old', scope: { type: 'workspace', targetId: 'ws-gone' } }),
+    createSession('s-dangling-2', { title: 'Older', scope: { type: 'terminal', targetId: 'term-gone' } }),
   ];
   const entries = buildEntries(sessions);
   const dangling = entries.find((entry) => entry.isDangling);
   assert.ok(dangling);
 
   assert.equal(resolveRebindTargetFromArg('1', entries)?.sessionId, 's-dangling');
-  assert.equal(resolveRebindTargetFromArg(' 2 ', entries), null);
+  assert.equal(resolveRebindTargetFromArg(' 2 ', entries)?.sessionId, entries.filter((entry) => entry.isDangling)[1].sessionId);
+  assert.equal(resolveRebindTargetFromArg('3', entries), null);
+  assert.equal(resolveRebindTargetFromArg('1foo', entries), null);
+  assert.equal(resolveRebindTargetFromArg('1.5', entries), null);
   assert.equal(resolveRebindTargetFromArg('0', entries), null);
+  assert.equal(resolveRebindTargetFromArg('-1', entries), null);
+  assert.equal(resolveRebindTargetFromArg('', entries), null);
   assert.equal(resolveRebindTargetFromArg('abc', entries), null);
   // A live entry is not rebindable even if its position would match.
   assert.equal(resolveRebindTargetFromArg('1', [entries[0]]), null);
