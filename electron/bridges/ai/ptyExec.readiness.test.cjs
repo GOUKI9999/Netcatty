@@ -36,6 +36,21 @@ test('PTY sends no bytes while a slow shell is starting, then runs once ready', 
   assert.equal(pty.writes.length, 1);
 });
 
+test('PowerShell continuation remains blocked without submitting or clearing pending input', async () => {
+  for (const continuation of ['>> ', '>> Write-Output pending']) {
+    const pty = new TestPty();
+    const session = { _promptTrackTail: '', lastIdlePrompt: '' };
+    trackSessionIdlePrompt(session, `PS C:\\work> \r\n${continuation}`);
+    const result = await startPtyJob(pty, 'Write-Output agent', {
+      shellKind: 'powershell',
+      getReadyPrompt: () => readyPrompt(session),
+      promptWaitTimeoutMs: 25,
+    }).resultPromise;
+    assert.equal(result.code, 'SHELL_NOT_READY');
+    assert.deepEqual(pty.writes, []);
+  }
+});
+
 test('macOS default zsh prompt is recognized as an idle prompt', async () => {
   const pty = new TestPty();
   const session = { _promptTrackTail: '', lastIdlePrompt: '' };
