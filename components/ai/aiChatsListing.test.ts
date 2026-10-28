@@ -4,11 +4,21 @@ import test from 'node:test';
 import type { AISession, ExternalAgentConfig } from '../../infrastructure/ai/types.ts';
 import {
   buildAiChatsListingEntries,
+  canRebindChat,
   formatAiChatsListingNote,
   resolveChatAgentLabel,
   resolveRebindTargetFromArg,
   truncateChatTitle,
 } from './aiChatsListing.ts';
+
+test('rebind revalidates cached entries against current sessions and live targets', () => {
+  const liveTargets = new Set(['ws-live', 'term-live']);
+  assert.equal(canRebindChat(undefined, liveTargets), false);
+  assert.equal(canRebindChat(createSession('restored', { scope: { type: 'workspace', targetId: 'ws-live' } }), liveTargets), false);
+  assert.equal(canRebindChat(createSession('restored-terminal', { scope: { type: 'terminal', targetId: 'term-live' } }), liveTargets), false);
+  assert.equal(canRebindChat(createSession('dangling', { scopeDangling: true, scope: { type: 'workspace', targetId: 'ws-old' } }), liveTargets), true);
+  assert.equal(canRebindChat(createSession('unbound', { scope: { type: 'terminal', targetId: 'term-old' } }), liveTargets), true);
+});
 
 function createSession(
   id: string,

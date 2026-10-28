@@ -130,6 +130,12 @@ export function resolveRebindTargetFromArg(
   return dangling[index - 1] ?? null;
 }
 
+/** Revalidate a cached listing entry against the current session and live scopes. */
+export function canRebindChat(session: AISession | undefined, liveScopeTargetIds: ReadonlySet<string>): boolean {
+  if (!session) return false;
+  return !!session.scopeDangling || !session.scope.targetId || !liveScopeTargetIds.has(session.scope.targetId);
+}
+
 export function formatAiChatsListingNote(
   entries: AiChatsListingEntry[],
   t: (key: string) => string,

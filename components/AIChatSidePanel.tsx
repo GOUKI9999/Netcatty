@@ -64,7 +64,7 @@ import {
   type DefaultTargetSessionHint,
 } from '../application/state/useAIChatStreaming';
 import { getScopedHistorySessions } from './ai/scopedHistorySessions';
-import { buildAiChatsListingEntries, formatAiChatsListingNote, resolveRebindTargetFromArg, type AiChatsListingEntry } from './ai/aiChatsListing';
+import { buildAiChatsListingEntries, canRebindChat, formatAiChatsListingNote, resolveRebindTargetFromArg, type AiChatsListingEntry } from './ai/aiChatsListing';
 import { resolveInheritedAIActiveSessionId } from '../domain/aiWorkspaceScopeInherit';
 import { resolveUndoLastTurnBoundary } from '../domain/aiUndoLastTurn';
 import { aiSessionIdSetEqual, exactScopeAISessionsEqual } from '../domain/aiSessionsForScope';
@@ -552,8 +552,16 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       toast.warning(t('ai.chat.rebindUsage'));
       return;
     }
-    rebindSessionScope?.(target.sessionId, { type: scopeType, targetId: scopeTargetId, hostIds: scopeHostIds });
-    toast.success(t('ai.chat.rebindDone').replace('{title}', target.title));
+    const session = sessions.find((item) => item.id === target.sessionId);
+    const liveTargets = new Set(liveScopeTargetIds ?? workspaceMemberTerminalIds ?? []);
+    for (const workspace of workspaces) liveTargets.add(workspace.id);
+    liveTargets.add(scopeTargetId);
+    if (canRebindChat(session, liveTargets)) {
+      rebindSessionScope?.(target.sessionId, { type: scopeType, targetId: scopeTargetId, hostIds: scopeHostIds });
+      toast.success(t('ai.chat.rebindDone').replace('{title}', target.title));
+    } else {
+      toast.warning(t('ai.chat.rebindUsage'));
+    }
     // Do not rebuild /chats from this render's stale sessions (still dangling).
     // Drop the resolved entry from the stored listing so a repeat /rebind <n>
     // cannot target it; the next explicit /chats refreshes from live state.
@@ -571,7 +579,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     }
     lastChatsListingRef.current = remaining;
     setPanelCommandNote(formatAiChatsListingNote(remaining, t));
-  }, [rebindSessionScope, scopeHostIds, scopeTargetId, scopeType, t]);
+  }, [liveScopeTargetIds, rebindSessionScope, scopeHostIds, scopeTargetId, scopeType, sessions, t, workspaces, workspaceMemberTerminalIds]);
 
   // Manual durability actions (history drawer header). Export writes the
   // whole store to a user-chosen JSON file; import merges by id.
