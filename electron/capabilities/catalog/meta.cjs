@@ -163,7 +163,7 @@ const META_CAPABILITIES = [
     id: "session.recover",
     domain: "session",
     status: CAPABILITY_STATUS.IMPLEMENTED,
-    description: "Inspect and recover a scoped disconnected session in place. Automatically applies bounded reconnect/backoff and observes shell readiness for up to 20 seconds per call; pending calls may be continued within the shared 120-second incident and three-reconnect limit. Stops for authentication, busy jobs, cancellation or unavailable state. Never creates tabs or executes/replays commands. A connected transport with unknown shell readiness requires inspection.",
+    description: "Inspect and recover a scoped disconnected session in place. Automatically applies bounded reconnect/backoff for up to 20 seconds per call and reports the connection as ready once the transport is restored; shellReady is advisory (true/false/null) and, when unconfirmed, nextAction \"inspect_shell\" asks you to verify the prompt before typing. Stops for authentication, busy jobs, cancellation or unavailable state. Never creates tabs or executes/replays commands.",
     policy: {
       write: true,
       sensitiveRead: false,

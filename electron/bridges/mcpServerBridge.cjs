@@ -1666,7 +1666,12 @@ sessionService = createSessionService({
       ready: Boolean(getFreshIdlePrompt(runtime) || getVisibleIdlePrompt(runtime)),
     } : await queryWorkerShellReadiness(params.sessionId, state.status);
     const trackedShell = Boolean(probe?.trackedShell) && !isNetworkDeviceLikeMeta(meta);
-    const shellReady = state.status !== "connected" || !probe ? false : trackedShell
+    // shellReady semantics: transport not connected → false; connected but
+    // the shell is untracked or the probe missed/timed out → null (unknown);
+    // a tracked shell reports its observed readiness. It is advisory for
+    // callers: recovery never writes to the PTY, so an unknown or false
+    // readiness only asks for an inspect_shell step, never blocks.
+    const shellReady = state.status !== "connected" ? false : !probe ? null : trackedShell
       ? Boolean(probe.ready) : null;
     return { ...state, shellReady, busy: Boolean(getSessionBusyError(params.sessionId)) };
   },

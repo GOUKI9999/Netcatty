@@ -38,17 +38,28 @@ function createSessionRecoveryService(ctx = {}) {
         if (state.stopped) return { ok: false, sessionId: id, status: "stopped", code: "RECOVERY_CANCELLED", error: "The user stopped this terminal connection. Do not reconnect automatically." };
         if (state.waitingForInput) return { ...state, sessionId: id, status: "needs_input", shellReady: false, nextAction: "user_input" };
         if (state.busy) return { ...state, sessionId: id, status: "busy", shellReady: false, nextAction: "inspect_job" };
-        if (state.status === "connected" && state.shellReady !== false) {
+        if (state.status === "connected") {
+          // Transport truth has converged: the connection is restored and
+          // this bounded budget observed no transport error. shellReady is
+          // ADVISORY here, not a gate. Recovery never types or replays
+          // anything into the PTY, so a false-ready cannot inject input —
+          // the agent verifies with its next action before writing. The
+          // harm of a false-ready (one extra inspect_shell step) is far
+          // below the harm of a false-NOT-ready, which used to loop this
+          // recovery forever on custom/colored prompts (starship, PowerShell
+          // continuation) the readiness probe cannot parse, leaving agents
+          // convinced the session was unusable.
           incidents.delete(id);
-          return { ...state, sessionId: id, shellReady: state.shellReady === true ? true : null,
-            status: state.shellReady === true ? "ready" : "connected", nextAction: state.shellReady === true ? "continue_task" : "inspect_shell" };
+          const shellReady = state.shellReady === true ? true : state.shellReady === false ? false : null;
+          return { ...state, sessionId: id, shellReady, status: "ready",
+            nextAction: shellReady === true ? "continue_task" : "inspect_shell" };
         }
         if (now() - startedAt >= 120000) return { ok: false, sessionId: id, code: "RECOVERY_LIMIT", error: "Recovery elapsed budget exhausted. Inspect the blocked session and continue independent authorized work." };
         if (now() >= callDeadline) break;
         let waitMs = 1000;
         if (state.status === "disconnected" && !state.reconnecting) {
           if (!state.reconnectAllowed) return { ...state, sessionId: id, status: "unavailable", nextAction: "inspect_terminal" };
-          if (incident.attempts >= 3) return { ok: false, sessionId: id, code: "RECONNECT_LIMIT", error: "Three recovery attempts exhausted without an observed ready shell." };
+          if (incident.attempts >= 3) return { ok: false, sessionId: id, code: "RECONNECT_LIMIT", error: "Three recovery attempts exhausted without a restored connection." };
           if (incident.nextAt > now()) waitMs = incident.nextAt - now();
           else {
             const result = await ctx.reconnect(params, { ...executionContext, deadlineAt: Math.min(callDeadline, startedAt + 120000) });
@@ -74,7 +85,14 @@ function createSessionRecoveryService(ctx = {}) {
           if (cancelled) return cancelled;
         }
       }
-      return pending(id);
+      // The bounded budget expired without a transport error or a user
+      // cancellation. Recovery never writes to the PTY, so completing here
+      // cannot inject input; the agent verifies with its next action.
+      // Reporting an advisory ready with an unknown shell beats returning
+      // pending, which used to trap agents in an endless session_recover
+      // loop whenever the readiness probe could not confirm the prompt.
+      return { ok: true, sessionId: id, status: "ready", shellReady: null,
+        nextAction: "inspect_shell" };
     } finally {
       running.delete(id);
     }

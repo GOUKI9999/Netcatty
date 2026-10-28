@@ -32,7 +32,11 @@ test("continuations preserve the overall deadline and never restart a connecting
   f.setState({ ok: true, status: "connecting" });
   for (let i = 0; i < 6; i++) {
     const result = await f.service.recover({ sessionId: "s", chatSessionId: String(i) });
-    assert.equal(result.status, "pending");
+    // Budget exhaustion is an advisory completion with an inspect_shell
+    // hint, never a pending loop that traps the agent in session_recover.
+    assert.equal(result.status, "ready");
+    assert.equal(result.shellReady, null);
+    assert.equal(result.nextAction, "inspect_shell");
     assert.ok(f.now() <= (i + 1) * 20000);
   }
   assert.equal((await f.service.recover({ sessionId: "s" })).code, "RECOVERY_LIMIT");
@@ -104,23 +108,25 @@ test("concurrent callers inspect their scope but do not start duplicate recovery
   assert.equal((await running).error, "cancelled");
 });
 
-test("unknown readiness never claims a shell is ready and failures do not loop", async () => {
+test("unknown readiness is an advisory hint, not a gate, and failures do not loop", async () => {
   const f = fixture();
   f.setState({ ok: true, status: "connected", shellReady: null });
   const result = await f.service.recover({ sessionId: "s" });
-  assert.equal(result.status, "connected");
+  assert.equal(result.status, "ready");
   assert.equal(result.shellReady, null);
+  assert.equal(result.nextAction, "inspect_shell");
   const failed = fixture({ inspect: async () => ({ ok: false, error: "renderer timeout" }) });
   assert.equal((await failed.service.recover({ sessionId: "s" })).error, "renderer timeout");
   assert.equal(failed.calls(), 0);
 });
 
-test("a connected transport waits for an observed prompt without restarting it", async () => {
-  let time = 0;
-  const f = fixture({ now: () => time, sleep: async ms => { time += ms; },
-    inspect: async () => ({ ok: true, status: 'connected', shellReady: time >= 2000 }) });
-  assert.equal((await f.service.recover({ sessionId: 's' })).status, 'ready');
-  assert.equal(time, 2000);
+test("a false-ready prompt no longer gates a connected transport", async () => {
+  const f = fixture();
+  f.setState({ ok: true, status: "connected", shellReady: false });
+  const result = await f.service.recover({ sessionId: "s" });
+  assert.equal(result.status, "ready");
+  assert.equal(result.shellReady, false);
+  assert.equal(result.nextAction, "inspect_shell");
   assert.equal(f.calls(), 0);
 });
 

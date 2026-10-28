@@ -79,6 +79,9 @@ test('worker-owned SSH sessions resolve prompt readiness through the terminal wo
               visibleIdlePrompt: 'root@host:~# ',
             });
           }
+          if (payload.sessionId === 'worker-false') {
+            return Promise.resolve({ ok: true, found: true, trackedShell: true, freshIdlePrompt: '', visibleIdlePrompt: '' });
+          }
           if (payload.sessionId === 'worker-untracked') {
             return Promise.resolve({ ok: true, found: true, trackedShell: false, freshIdlePrompt: '', visibleIdlePrompt: '' });
           }
@@ -103,6 +106,18 @@ test('worker-owned SSH sessions resolve prompt readiness through the terminal wo
   assert.equal(result.status, 'ready');
   assert.equal(result.shellReady, true);
   assert.deepEqual(readinessRequests, ['worker-ready']);
+  // A confirmed not-idle prompt stays advisory: recovery completes with a
+  // hint instead of looping, since it never writes to the PTY.
+  bridge.updateSessionMetadata([{ sessionId: 'worker-false', protocol: 'ssh', connected: true }], 'worker-chat');
+  bridge.setVaultAgentInvoker(async (op, params) => {
+    assert.equal(op, 'session.inspectRecovery');
+    inspections++;
+    return { ok: true, status: 'connected' };
+  });
+  const unconfirmed = await bridge.dispatchBuiltinRpc('session/recover', { sessionId: 'worker-false', chatSessionId: 'worker-chat' });
+  assert.equal(unconfirmed.status, 'ready');
+  assert.equal(unconfirmed.shellReady, false);
+  assert.equal(unconfirmed.nextAction, 'inspect_shell');
   // An untracked worker shell stays unknown (null), never falsely ready.
   bridge.updateSessionMetadata([{ sessionId: 'worker-untracked', protocol: 'ssh', connected: true }], 'worker-chat');
   bridge.setVaultAgentInvoker(async (op, params) => {
@@ -111,18 +126,18 @@ test('worker-owned SSH sessions resolve prompt readiness through the terminal wo
     return { ok: true, status: 'connected' };
   });
   const untracked = await bridge.dispatchBuiltinRpc('session/recover', { sessionId: 'worker-untracked', chatSessionId: 'worker-chat' });
-  assert.equal(untracked.status, 'connected');
+  assert.equal(untracked.status, 'ready');
   assert.equal(untracked.shellReady, null);
   assert.equal(untracked.nextAction, 'inspect_shell');
-  assert.equal(inspections, 2);
+  assert.equal(inspections, 3);
 });
 
-test('a hung worker readiness probe times out and lets the recovery loop reach its deadline machinery', async (t) => {
+test('a hung worker readiness probe times out and recovery completes with an advisory hint', async (t) => {
   const bridge = require('./mcpServerBridge.cjs');
   t.after(() => bridge.cleanup());
   // Synthetic regression for the unresolved P2: a live-but-unresponsive
   // worker left `await terminalWorkerManager.request` pending forever, so
-  // recovery hung inside ctx.inspect and never reached its 20s deadline or
+  // recovery hung inside ctx.inspect and never reached its deadline or
   // released the session's running lock. The probe must be bounded instead.
   bridge.init({
     sessions: new Map(),
@@ -144,27 +159,27 @@ test('a hung worker readiness probe times out and lets the recovery loop reach i
     assert.equal(op, 'session.inspectRecovery');
     assert.equal(params.sessionId, 'worker-hang');
     inspections++;
-    if (inspections === 1) return { ok: true, status: 'connected' };
-    // Short-circuit the retry loop on the second pass: reaching this proves
-    // the loop survived the hung probe instead of stalling inside it.
-    return { ok: false, error: 'synthetic stop' };
+    return { ok: true, status: 'connected' };
   });
   const startedAt = Date.now();
   const result = await bridge.dispatchBuiltinRpc('session/recover', { sessionId: 'worker-hang', chatSessionId: 'hang-chat' });
   const elapsed = Date.now() - startedAt;
-  assert.equal(result.ok, false);
-  assert.match(result.error, /synthetic stop/);
-  // The probe held for its timeout bound before yielding an unknown state.
+  // The hung probe held for its timeout bound, yielded an unknown state,
+  // and recovery completed on the connected transport truth instead of
+  // looping: shellReady is an advisory null with an inspect_shell hint.
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'ready');
+  assert.equal(result.shellReady, null);
+  assert.equal(result.nextAction, 'inspect_shell');
   assert.ok(elapsed >= 1900, `recovery settled too early (${elapsed}ms): probe timeout did not engage`);
-  // It did not hang: the loop reached its next inspection (~probe timeout + 1s backoff).
   assert.ok(elapsed < 15000, `recovery hung for ${elapsed}ms`);
-  assert.equal(inspections, 2);
+  assert.equal(inspections, 1);
   // The running lock must be released: a follow-up recovery proceeds at once.
   const secondStartedAt = Date.now();
   const second = await bridge.dispatchBuiltinRpc('session/recover', { sessionId: 'worker-hang', chatSessionId: 'hang-chat' });
-  assert.equal(second.ok, false);
-  assert.match(second.error, /synthetic stop/);
-  assert.ok(Date.now() - secondStartedAt < 1500, 'running lock was not released after the timeout');
-  assert.equal(inspections, 3);
+  assert.equal(second.status, 'ready');
+  assert.equal(second.shellReady, null);
+  assert.ok(Date.now() - secondStartedAt < 15000, 'running lock was not released after the timeout');
+  assert.equal(inspections, 2);
 });
 
