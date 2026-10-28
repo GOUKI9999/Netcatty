@@ -1255,3 +1255,87 @@ test("a failed machine hive does not promote user directories ahead of inherited
     platform: "win32", basePath: "C:\\Windows\\System32", env: {}, knownCliDirs: () => [],
   }), "C:\\Windows\\System32;C:\\user-tools");
 });
+
+// ── Continuation prompts (`>>` / `>`) ──
+
+test("extractTrailingIdlePrompt accepts a PowerShell `>>` continuation after a PS prompt", () => {
+  const context = { previousPrompt: "PS C:\\x>", shellKind: "powershell" };
+  assert.equal(extractTrailingIdlePrompt("PS C:\\x> foreach {\r\n>> ", context), ">> ");
+  assert.equal(extractTrailingIdlePrompt("PS C:\\x> if ($x) {\r\n>>", context), ">>");
+});
+
+test("extractTrailingIdlePrompt chains repeated PowerShell `>>` lines through the cached continuation", () => {
+  const session = { _promptTrackTail: "", lastIdlePrompt: "", shellKind: "powershell" };
+  trackSessionIdlePrompt(session, "PS C:\\x>");
+  trackSessionIdlePrompt(session, " foreach {\r\n>> ");
+  assert.equal(session.lastIdlePrompt, ">> ");
+  assert.equal(getFreshIdlePrompt(session), ">> ");
+  trackSessionIdlePrompt(session, "$_.Name\r\n>> ");
+  assert.equal(getFreshIdlePrompt(session), ">> ");
+  // Enter on an empty continuation returns to the primary prompt cache.
+  trackSessionIdlePrompt(session, "\r\nPS C:\\x> ");
+  assert.equal(getFreshIdlePrompt(session), "PS C:\\x> ");
+});
+
+test("extractTrailingIdlePrompt accepts a bash `>` continuation after a POSIX prompt", () => {
+  const context = { previousPrompt: "user@host:~$ ", shellKind: "posix" };
+  assert.equal(extractTrailingIdlePrompt("user@host:~$ cat <<EOF\r\n> ", context), "> ");
+});
+
+test("extractTrailingIdlePrompt chains repeated bash `>` lines and returns to the primary prompt", () => {
+  const session = { _promptTrackTail: "", lastIdlePrompt: "", shellKind: "posix" };
+  trackSessionIdlePrompt(session, "Last login\r\nuser@host:~$ ");
+  trackSessionIdlePrompt(session, "cat <<EOF\r\n> ");
+  assert.equal(session.lastIdlePrompt, "> ");
+  assert.equal(getFreshIdlePrompt(session), "> ");
+  trackSessionIdlePrompt(session, "line2\r\n> ");
+  assert.equal(getFreshIdlePrompt(session), "> ");
+  trackSessionIdlePrompt(session, "EOF\r\nuser@host:~$ ");
+  assert.equal(getFreshIdlePrompt(session), "user@host:~$ ");
+});
+
+test("extractTrailingIdlePrompt accepts `>` after a two-line POSIX PS1 cache", () => {
+  const context = { previousPrompt: "user@host: /home/foo\n\n\n$ ", shellKind: "unknown" };
+  assert.equal(extractTrailingIdlePrompt("user@host: /home/foo\r\n\r\n$ cat <<EOF\r\n> ", context), "> ");
+});
+
+test("extractTrailingIdlePrompt rejects continuation prompts without a recognized prior prompt", () => {
+  // A program's last output line `>>` with no prior prompt on the session
+  // must not unlock readiness (false-ready is the dangerous direction).
+  assert.equal(extractTrailingIdlePrompt("prog output\r\n>> ", { previousPrompt: "", shellKind: "powershell" }), "");
+  assert.equal(extractTrailingIdlePrompt("prog output\r\n> ", { previousPrompt: "", shellKind: "posix" }), "");
+  assert.equal(extractTrailingIdlePrompt("prog output\r\n>> ", { previousPrompt: "some custom prompt", shellKind: "powershell" }), "");
+  // No context at all (legacy single-argument callers) stays fail-closed.
+  assert.equal(extractTrailingIdlePrompt("PS C:\\x>\r\n>> "), "");
+  assert.equal(extractTrailingIdlePrompt("user@host:~$\r\n> "), "");
+});
+
+test("extractTrailingIdlePrompt rejects continuation prompts on incompatible shell kinds", () => {
+  // `>>` on a cmd-kind session (cmd's secondary prompt is `More?`).
+  assert.equal(extractTrailingIdlePrompt("PS C:\\x>\r\n>> ", { previousPrompt: "PS C:\\x>", shellKind: "cmd" }), "");
+  // Bare `>` on a powershell session.
+  assert.equal(extractTrailingIdlePrompt("PS C:\\x>\r\n> ", { previousPrompt: "PS C:\\x>", shellKind: "powershell" }), "");
+  // `>` on a cmd session, and `>>` on a posix session.
+  assert.equal(extractTrailingIdlePrompt("user@host:~$\r\n> ", { previousPrompt: "user@host:~$ ", shellKind: "cmd" }), "");
+  assert.equal(extractTrailingIdlePrompt("PS C:\\x>\r\n>> ", { previousPrompt: "PS C:\\x>", shellKind: "posix" }), "");
+});
+
+test("extractTrailingIdlePrompt rejects a continuation that follows a cross-family cached prompt", () => {
+  // A cmd.exe prompt cache does not certify a PowerShell `>>`.
+  assert.equal(extractTrailingIdlePrompt("C:\\>\r\n>> ", { previousPrompt: "C:\\> ", shellKind: "unknown" }), "");
+});
+
+test("trackSessionIdlePrompt and getVisibleIdlePrompt recognize a PowerShell continuation prompt", () => {
+  const session = { _promptTrackTail: "", lastIdlePrompt: "", shellKind: "powershell" };
+  trackSessionIdlePrompt(session, "PS C:\\x>");
+  trackSessionIdlePrompt(session, " foreach {\r\n>> ");
+  assert.equal(getVisibleIdlePrompt(session), ">> ");
+});
+
+test("getVisibleIdlePrompt rejects continuation prompts without gating state", () => {
+  const session = { _promptTrackTail: "prog output\r\n>> ", lastIdlePrompt: "", shellKind: "powershell" };
+  assert.equal(getVisibleIdlePrompt(session), "");
+  const cmdKind = { _promptTrackTail: "PS C:\\x>\r\n>> ", lastIdlePrompt: "PS C:\\x> ", shellKind: "cmd" };
+  assert.equal(getVisibleIdlePrompt(cmdKind), "");
+});
+

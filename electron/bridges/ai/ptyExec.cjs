@@ -93,7 +93,14 @@ function startPtyJob(ptyStream, command, options) {
     && resolvedShellKind === "powershell"
     && Boolean(expectedPrompt);
   if (promptRecoveryPendingPtys.has(ptyStream)) {
-    if (extractTrailingIdlePrompt(expectedPrompt || "")) {
+    // Pass the expectedPrompt as continuation context so a session left idle
+    // at a `>>`/`>` continuation prompt (cached by trackSessionIdlePrompt and
+    // returned by getReadyPrompt) still counts as a recognizable prompt.
+    // The expectedPrompt already passed full gating when it was cached.
+    if (extractTrailingIdlePrompt(expectedPrompt || "", {
+      previousPrompt: expectedPrompt || "",
+      shellKind,
+    })) {
       promptRecoveryPendingPtys.delete(ptyStream);
     } else {
       const error = new Error(

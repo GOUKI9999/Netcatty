@@ -393,3 +393,94 @@ test('real pending PowerShell input is still not sent', async (t) => {
   assert.match(result.error, /no command was sent/);
   assert.deepEqual(pty.writes, []);
 });
+
+// ── Continuation prompts (`>>` / `>`) ──
+
+test('a PowerShell session idle at a `>>` continuation prompt receives the command', async () => {
+  const pty = new TestPty();
+  const session = { _promptTrackTail: '', lastIdlePrompt: '', shellKind: 'powershell' };
+  trackSessionIdlePrompt(session, 'PS C:\\Users\\alice>');
+  trackSessionIdlePrompt(session, ' foreach ($x in 1..2) {\r\n>> ');
+  assert.equal(readyPrompt(session), '>> ');
+  const result = await startPtyJob(pty, 'Write-Output ok', {
+    shellKind: 'powershell',
+    getReadyPrompt: () => readyPrompt(session),
+    promptWaitTimeoutMs: 200,
+    timeoutMs: 1000,
+  }).resultPromise;
+  assert.equal(result.ok, true);
+  assert.equal(pty.writes.length, 1);
+});
+
+test('a bash session idle at a `>` heredoc continuation prompt receives the command', async () => {
+  const pty = new TestPty();
+  const session = { _promptTrackTail: '', lastIdlePrompt: '', shellKind: 'posix' };
+  trackSessionIdlePrompt(session, 'Last login\r\nuser@host:~$ ');
+  trackSessionIdlePrompt(session, 'cat <<EOF\r\n> ');
+  assert.equal(readyPrompt(session), '> ');
+  const result = await startPtyJob(pty, 'echo OK', {
+    shellKind: 'posix',
+    getReadyPrompt: () => readyPrompt(session),
+    promptWaitTimeoutMs: 200,
+    timeoutMs: 1000,
+  }).resultPromise;
+  assert.equal(result.ok, true);
+  assert.equal(pty.writes.length, 1);
+});
+
+test('program output ending in `>>` with no prior prompt never becomes ready', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+  const pty = new TestPty();
+  const session = { _promptTrackTail: '', lastIdlePrompt: '', shellKind: 'powershell' };
+  trackSessionIdlePrompt(session, 'installer progress\r\n>> ');
+  assert.equal(readyPrompt(session), '');
+  const job = startPtyJob(pty, 'echo OK', {
+    shellKind: 'powershell',
+    getReadyPrompt: () => readyPrompt(session),
+    promptWaitTimeoutMs: 50,
+    timeoutMs: 1000,
+  });
+  t.mock.timers.tick(50);
+  const result = await job.resultPromise;
+  assert.equal(result.code, 'SHELL_NOT_READY');
+  assert.deepEqual(pty.writes, []);
+});
+
+test('a bare `>` on a powershell-kind session never becomes ready', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+  const pty = new TestPty();
+  const session = { _promptTrackTail: '', lastIdlePrompt: '', shellKind: 'powershell' };
+  trackSessionIdlePrompt(session, 'PS C:\\Users\\alice>');
+  trackSessionIdlePrompt(session, 'some program\r\n> ');
+  assert.equal(readyPrompt(session), '');
+  const job = startPtyJob(pty, 'echo OK', {
+    shellKind: 'powershell',
+    getReadyPrompt: () => readyPrompt(session),
+    promptWaitTimeoutMs: 50,
+    timeoutMs: 1000,
+  });
+  t.mock.timers.tick(50);
+  const result = await job.resultPromise;
+  assert.equal(result.code, 'SHELL_NOT_READY');
+  assert.deepEqual(pty.writes, []);
+});
+
+test('`>>` on a cmd-kind session never becomes ready', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+  const pty = new TestPty();
+  const session = { _promptTrackTail: '', lastIdlePrompt: '', shellKind: 'cmd' };
+  trackSessionIdlePrompt(session, 'PS C:\\Users\\alice>');
+  trackSessionIdlePrompt(session, 'output\r\n>> ');
+  assert.equal(readyPrompt(session), '');
+  const job = startPtyJob(pty, 'echo OK', {
+    shellKind: 'cmd',
+    getReadyPrompt: () => readyPrompt(session),
+    promptWaitTimeoutMs: 50,
+    timeoutMs: 1000,
+  });
+  t.mock.timers.tick(50);
+  const result = await job.resultPromise;
+  assert.equal(result.code, 'SHELL_NOT_READY');
+  assert.deepEqual(pty.writes, []);
+});
+

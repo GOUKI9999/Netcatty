@@ -99,6 +99,73 @@ const OH_MY_ZSH_YS_HOST_LINE_PATTERN = /^#\s+[^\s@]+\s+@\s+[^\s]+(?:\s+[^\n\r]+)
 // within the path so partially entered commands do not count as idle prompts.
 const ALPINE_PROMPT_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_.-]*:(?:~(?:\/[^#$\n\r]*)?|\/[^#$\n\r]*)[#$]$/;
 
+// ── Continuation prompts ──
+//
+// PowerShell's `>>` and POSIX (bash/zsh) `>` are secondary prompts: the shell
+// prints them whenever a multi-line entry is incomplete, and they legitimately
+// accept input — an exec gate that only recognizes primary prompts fails with
+// SHELL_NOT_READY (no command is ever sent) even though the shell is idle.
+// They are also common in program output (a still-running process may print
+// `>>` or `>` as its last line), so false-ready is the dangerous direction.
+// Acceptance is therefore gated on session state:
+//   1. the session's shell kind must be compatible with the continuation
+//      family, and
+//   2. the session must already have cached a recognized primary prompt of
+//      the same family (or be inside an already-accepted continuation, so
+//      repeated `>>` lines chain through the cached prompt).
+// Callers without session state keep the previous fail-closed behavior.
+const POWERSHELL_CONTINUATION_PROMPT = ">>";
+const POSIX_CONTINUATION_PROMPT = ">";
+
+// ""/"unknown" are open kinds (remote SSH before the live shell is
+// classified): the cached prompt's own shape then decides. cmd.exe never
+// prints `>>`/`>` as a continuation (its secondary prompt is `More?`), and
+// fish uses a different one, so those kinds are excluded from both families.
+const POWERSHELL_CONTINUATION_SHELL_KINDS = new Set(["powershell", "", "unknown"]);
+const POSIX_CONTINUATION_SHELL_KINDS = new Set(["posix", "", "unknown"]);
+
+function lastPromptLineOf(cachedPrompt) {
+  return String(cachedPrompt || "")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .pop()
+    .replace(/\s+$/, "");
+}
+
+function cachedPromptAllowsPowerShellContinuation(cachedPrompt) {
+  const lastLine = lastPromptLineOf(cachedPrompt);
+  if (!lastLine) return false;
+  return POWERSHELL_PROMPT_PATTERN.test(lastLine) || lastLine === POWERSHELL_CONTINUATION_PROMPT;
+}
+
+function cachedPromptAllowsPosixContinuation(cachedPrompt) {
+  const lastLine = lastPromptLineOf(cachedPrompt);
+  if (!lastLine) return false;
+  if (isDefaultPosixPromptLine(lastLine)) return true;
+  // Two-line PS1 cache (`<host line>\n$`/`#`): the previous non-empty line
+  // must be a recognized host line, mirroring extractTrailingIdlePrompt's
+  // rule for a bare `$`/`#` last line.
+  if (lastLine !== "$" && lastLine !== "#") return false;
+  const lines = String(cachedPrompt || "").replace(/\r/g, "\n").split("\n");
+  let hostIndex = lines.length - 2;
+  while (hostIndex >= 0 && lines[hostIndex].replace(/\s+$/, "") === "") hostIndex -= 1;
+  const hostLine = hostIndex >= 0
+    ? lines[hostIndex].replace(/\s+$/, "").replace(/^\([^()\n\r]+\)\s+/, "")
+    : "";
+  return POSIX_PROMPT_HOST_LINE_PATTERN.test(hostLine) || OH_MY_ZSH_YS_HOST_LINE_PATTERN.test(hostLine);
+}
+
+function isContinuationPromptAllowed(context, family) {
+  const { previousPrompt = "", shellKind = "" } = context || {};
+  const allowedKinds = family === "powershell"
+    ? POWERSHELL_CONTINUATION_SHELL_KINDS
+    : POSIX_CONTINUATION_SHELL_KINDS;
+  if (!allowedKinds.has(String(shellKind || ""))) return false;
+  return family === "powershell"
+    ? cachedPromptAllowsPowerShellContinuation(previousPrompt)
+    : cachedPromptAllowsPosixContinuation(previousPrompt);
+}
+
 function isDefaultPowerShellPromptLine(line) {
   return POWERSHELL_PROMPT_PATTERN.test(String(line || ""));
 }
@@ -121,7 +188,7 @@ function isDefaultPosixPromptLine(line) {
   );
 }
 
-function extractTrailingIdlePrompt(output) {
+function extractTrailingIdlePrompt(output, continuationContext = null) {
   // Treat `\r` as a line break, not as a stripped character: PSReadLine /
   // ConPTY repaints emit bare `\r` to redraw the current line, and we
   // want only the redrawn line to be considered, not the concatenation
@@ -173,6 +240,27 @@ function extractTrailingIdlePrompt(output) {
     }
   }
 
+  // Continuation prompts (see the block comment above the helpers). The
+  // context is optional: callers without session state keep the previous
+  // fail-closed behavior. Residual risk: a program whose last output line is
+  // exactly `>>`/`>` after a recognized same-family prompt still counts as
+  // idle — the same class of false-ready as prompt-shaped output, which the
+  // `__NCMCP_` end marker (not the prompt suffix) already tolerates for
+  // completion detection.
+  if (
+    rightTrimmed === POWERSHELL_CONTINUATION_PROMPT
+    && isContinuationPromptAllowed(continuationContext, "powershell")
+  ) {
+    return lastLine;
+  }
+
+  if (
+    rightTrimmed === POSIX_CONTINUATION_PROMPT
+    && isContinuationPromptAllowed(continuationContext, "posix")
+  ) {
+    return lastLine;
+  }
+
   return "";
 }
 
@@ -221,7 +309,10 @@ function trackSessionIdlePrompt(session, chunk) {
   const nextTail = overflow > 0 ? combined.slice(overflow) : combined;
   session._promptTrackTail = nextTail;
 
-  const prompt = extractTrailingIdlePrompt(nextTail);
+  const prompt = extractTrailingIdlePrompt(nextTail, {
+    previousPrompt: session.lastIdlePrompt,
+    shellKind: session.shellKind,
+  });
   if (prompt) {
     session.lastIdlePrompt = prompt;
     session.lastIdlePromptAt = Date.now();
@@ -275,10 +366,23 @@ function getVisibleIdlePrompt(session) {
   });
   const rightTrimmed = cursorLine.replace(/\s+$/, "");
   if (!rightTrimmed) return "";
+  // Mirror extractTrailingIdlePrompt's continuation acceptance: `>>`/`>` are
+  // idle prompts only for a compatible shell kind with a same-family cached
+  // prompt (see the block comment above the continuation helpers).
+  const continuationContext = {
+    previousPrompt: session.lastIdlePrompt,
+    shellKind: session.shellKind,
+  };
+  const isPowerShellContinuation = rightTrimmed === POWERSHELL_CONTINUATION_PROMPT
+    && isContinuationPromptAllowed(continuationContext, "powershell");
+  const isPosixContinuation = rightTrimmed === POSIX_CONTINUATION_PROMPT
+    && isContinuationPromptAllowed(continuationContext, "posix");
   if (
     !isDefaultPowerShellPromptLine(rightTrimmed)
     && !isDefaultPosixPromptLine(rightTrimmed)
     && !isDefaultCmdPromptLine(rightTrimmed)
+    && !isPowerShellContinuation
+    && !isPosixContinuation
   ) {
     return "";
   }
