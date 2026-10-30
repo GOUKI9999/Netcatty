@@ -32,14 +32,27 @@ test("continuations preserve the overall deadline and never restart a connecting
   f.setState({ ok: true, status: "connecting" });
   for (let i = 0; i < 6; i++) {
     const result = await f.service.recover({ sessionId: "s", chatSessionId: String(i) });
-    // Budget exhaustion is an advisory completion with an inspect_shell
-    // hint, never a pending loop that traps the agent in session_recover.
-    assert.equal(result.status, "ready");
-    assert.equal(result.shellReady, null);
-    assert.equal(result.nextAction, "inspect_shell");
+    // Still-connecting budget exhaustion must preserve nonconnected truth
+    // as pending — never a false ready.
+    assert.equal(result.status, "pending");
+    assert.equal(result.shellReady, false);
+    assert.equal(result.nextAction, "session_recover");
     assert.ok(f.now() <= (i + 1) * 20000);
   }
   assert.equal((await f.service.recover({ sessionId: "s" })).code, "RECOVERY_LIMIT");
+  assert.equal(f.calls(), 0);
+});
+
+test("offline call-budget exhaustion returns pending, not ready", async () => {
+  const f = fixture({
+    reconnect: async () => ({ ok: true, started: true }),
+  });
+  f.setState({ ok: true, status: "disconnected", reconnectAllowed: true, reconnecting: true });
+  const result = await f.service.recover({ sessionId: "s" });
+  assert.equal(result.status, "pending");
+  assert.equal(result.shellReady, false);
+  assert.equal(result.nextAction, "session_recover");
+  assert.notEqual(result.status, "ready");
   assert.equal(f.calls(), 0);
 });
 

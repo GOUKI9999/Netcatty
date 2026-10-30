@@ -28,6 +28,22 @@ function createSessionRecoveryService(ctx = {}) {
     incidents.set(id, incident);
     const callDeadline = now() + 20000;
     try {
+      const finishConnected = (state) => {
+        // Transport truth has converged: the connection is restored and
+        // this bounded budget observed no transport error. shellReady is
+        // ADVISORY here, not a gate. Recovery never types or replays
+        // anything into the PTY, so a false-ready cannot inject input —
+        // the agent verifies with its next action before writing. The
+        // harm of a false-ready (one extra inspect_shell step) is far
+        // below the harm of a false-NOT-ready, which used to loop this
+        // recovery forever on custom/colored prompts (starship, PowerShell
+        // continuation) the readiness probe cannot parse, leaving agents
+        // convinced the session was unusable.
+        incidents.delete(id);
+        const shellReady = state.shellReady === true ? true : state.shellReady === false ? false : null;
+        return { ...state, sessionId: id, shellReady, status: "ready",
+          nextAction: shellReady === true ? "continue_task" : "inspect_shell" };
+      };
       while (now() < callDeadline) {
         const blocked = validate();
         if (blocked) return blocked;
@@ -38,22 +54,7 @@ function createSessionRecoveryService(ctx = {}) {
         if (state.stopped) return { ok: false, sessionId: id, status: "stopped", code: "RECOVERY_CANCELLED", error: "The user stopped this terminal connection. Do not reconnect automatically." };
         if (state.waitingForInput) return { ...state, sessionId: id, status: "needs_input", shellReady: false, nextAction: "user_input" };
         if (state.busy) return { ...state, sessionId: id, status: "busy", shellReady: false, nextAction: "inspect_job" };
-        if (state.status === "connected") {
-          // Transport truth has converged: the connection is restored and
-          // this bounded budget observed no transport error. shellReady is
-          // ADVISORY here, not a gate. Recovery never types or replays
-          // anything into the PTY, so a false-ready cannot inject input —
-          // the agent verifies with its next action before writing. The
-          // harm of a false-ready (one extra inspect_shell step) is far
-          // below the harm of a false-NOT-ready, which used to loop this
-          // recovery forever on custom/colored prompts (starship, PowerShell
-          // continuation) the readiness probe cannot parse, leaving agents
-          // convinced the session was unusable.
-          incidents.delete(id);
-          const shellReady = state.shellReady === true ? true : state.shellReady === false ? false : null;
-          return { ...state, sessionId: id, shellReady, status: "ready",
-            nextAction: shellReady === true ? "continue_task" : "inspect_shell" };
-        }
+        if (state.status === "connected") return finishConnected(state);
         if (now() - startedAt >= 120000) return { ok: false, sessionId: id, code: "RECOVERY_LIMIT", error: "Recovery elapsed budget exhausted. Inspect the blocked session and continue independent authorized work." };
         if (now() >= callDeadline) break;
         let waitMs = 1000;
@@ -85,14 +86,24 @@ function createSessionRecoveryService(ctx = {}) {
           if (cancelled) return cancelled;
         }
       }
-      // The bounded budget expired without a transport error or a user
-      // cancellation. Recovery never writes to the PTY, so completing here
-      // cannot inject input; the agent verifies with its next action.
-      // Reporting an advisory ready with an unknown shell beats returning
-      // pending, which used to trap agents in an endless session_recover
-      // loop whenever the readiness probe could not confirm the prompt.
-      return { ok: true, sessionId: id, status: "ready", shellReady: null,
-        nextAction: "inspect_shell" };
+      // Call budget expired without a restored transport. Do not report
+      // ready while still offline/connecting — that was a false success.
+      // Preserve nonconnected truth as pending so the shared incident can
+      // continue. A final inspect covers a race where the transport landed
+      // after the last loop iteration.
+      const blocked = validate();
+      if (blocked) return blocked;
+      const finalState = await ctx.inspect(params, Math.min(2000, Math.max(1, callDeadline + 20000 - now())));
+      const revoked = validate();
+      if (revoked) return revoked;
+      if (finalState?.ok !== true) return finalState || { ok: false, error: "Recovery state is unavailable." };
+      if (finalState.stopped) return { ok: false, sessionId: id, status: "stopped", code: "RECOVERY_CANCELLED", error: "The user stopped this terminal connection. Do not reconnect automatically." };
+      if (finalState.waitingForInput) return { ...finalState, sessionId: id, status: "needs_input", shellReady: false, nextAction: "user_input" };
+      if (finalState.busy) return { ...finalState, sessionId: id, status: "busy", shellReady: false, nextAction: "inspect_job" };
+      if (finalState.status === "connected") return finishConnected(finalState);
+      // Leave RECOVERY_LIMIT for the next call's loop so a just-expired
+      // 120s incident still reports pending for this call budget.
+      return pending(id);
     } finally {
       running.delete(id);
     }
