@@ -146,6 +146,29 @@ test("author presentation is a trusted-app-only route and forwards no invented a
   assert.equal(result.officialMaintained, false); assert.deepEqual(calls, [payload]);
 });
 
+test("catalog brand icon route is trusted-app-only and forwards id, selectionToken, and sourceId", async () => {
+  const ipcMain = createIpcMain();
+  const calls = [];
+  registerPluginBridge(ipcMain, {
+    manager: { initialize: async () => {} },
+    isTrustedSender: createTrustedPluginBridgeSender({ devServerUrl: "http://localhost:5173" }),
+    catalogService: {
+      brandIcon: async (id, selectionToken, sourceId) => {
+        calls.push({ id, selectionToken, sourceId });
+        return { light: "data:image/png;base64,YQ==", dark: "data:image/png;base64,Yg==" };
+      },
+    },
+  });
+  const payload = { id: "com.binaricat.netcatty-database", selectionToken: "a".repeat(64), sourceId: "official" };
+  for (const url of ["netcatty-plugin://plugin-runtime/index.html", "https://attacker.invalid/"]) {
+    await assert.rejects(ipcMain.handlers.get(CHANNELS.catalogBrandIcon)({ senderFrame: { url } }, payload), /Untrusted/);
+  }
+  assert.deepEqual(calls, []);
+  const result = await ipcMain.handlers.get(CHANNELS.catalogBrandIcon)({ senderFrame: { url: "app://netcatty/index.html" } }, payload);
+  assert.deepEqual(result, { light: "data:image/png;base64,YQ==", dark: "data:image/png;base64,Yg==" });
+  assert.deepEqual(calls, [payload]);
+});
+
 test("plugin Vault credential catalog updates only through the trusted host bridge", async () => {
   const ipcMain = createIpcMain();
   const updates = [];

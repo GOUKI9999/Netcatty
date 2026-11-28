@@ -11,9 +11,14 @@ const { OFFICIAL_SOURCE, isOfficialMaintained } = require("./sourceIdentity.cjs"
 const entries = require("./catalog.json");
 
 test("curated catalog uses pinned public first-party source and rejects advanced manifests", () => {
-  assert.equal(validateCatalog(entries).length, 3);
+  assert.equal(validateCatalog(entries).length, 4);
+  const database = entries.find((item) => item.id === "com.binaricat.netcatty-database");
+  assert.ok(database, "catalog should include official com.binaricat.netcatty-database");
+  assert.equal(database.version, "0.3.0");
+  assert.equal(isOfficialMaintained(database, OFFICIAL_SOURCE), true);
   const monitor = entries.find((item) => item.id === "com.binaricat.netcatty-monitor");
   assert.ok(monitor, "catalog should include official com.binaricat.netcatty-monitor");
+  assert.equal(monitor.version, "0.2.0");
   assert.equal(isOfficialMaintained(monitor, OFFICIAL_SOURCE), true);
   for (const main of [{ node: "index.js" }, { browser: "index.js", node: "node.js" }]) {
     const entry = structuredClone(entries[0]); entry.manifest.main = main;

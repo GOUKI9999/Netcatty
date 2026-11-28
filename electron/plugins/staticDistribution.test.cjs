@@ -107,3 +107,31 @@ test("pointer/document/resource byte mismatches and partial availability never p
   files = realFiles(); files.set(delivery.plugins[0].readme.path, Buffer.from("x".repeat(delivery.plugins[0].readme.size)));
   await assert.rejects(service.readme(good.entries[0].id, good.entries[0].selectionToken), /SHA-256 mismatch/);
 });
+
+test("historical non-current index versions with legacy manifest fields are tolerated while current entries remain strictly validated", async () => {
+  const legacyEntry = structuredClone(catalog[0]);
+  legacyEntry.version = "0.1.1";
+  legacyEntry.manifest.version = "0.1.1";
+  legacyEntry.manifest.contributes.views[0].entry = "panel.html";
+  const files = makeFiles(catalog, (index) => {
+    index.plugins[0].versions.unshift({
+      entry: legacyEntry,
+      distribution: "source-only",
+      withdrawal: null,
+    });
+  });
+  const service = new RegistryCatalogService({ fetch: async (url) => responseFor(files, url) });
+  const snapshot = await service.list();
+  assert.equal(snapshot.source, "registry");
+  assert.equal(snapshot.error, null);
+  assert.equal(snapshot.entries.length, catalog.length);
+
+  // If the current catalog entry itself carries the legacy field, strict validation rejects it.
+  const badCurrent = structuredClone(catalog);
+  badCurrent[0].manifest.contributes.views[0].entry = "panel.html";
+  const badFiles = makeFiles(badCurrent);
+  const badService = new RegistryCatalogService({ fetch: async (url) => responseFor(badFiles, url) });
+  const rejected = await badService.list();
+  assert.equal(rejected.source, "builtin");
+  assert.match(rejected.error ?? "", /Catalog manifest is invalid/);
+});

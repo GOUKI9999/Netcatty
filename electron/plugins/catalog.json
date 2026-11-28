@@ -192,13 +192,150 @@
     }
   },
   {
+    "id": "com.binaricat.netcatty-database",
+    "version": "0.3.0",
+    "name": "Netcatty Database",
+    "description": "Enterprise-grade multi-database IDE inside Netcatty covering 113 engine profiles (76 live pure-TS drivers across 13 families incl. SQL, CQL, Redis, MongoDB, Neo4j, Search/Vector, KV, RabbitMQ/Pulsar/MQTT/Kafka + 37 catalog entries), BI Dashboard across 53 engines (SQL/CQL/HTTP-SQL + MongoDB Aggregation), Catty Agent tools, Server Monitor, Users Admin, Data Compare, Mock Data, Data Dictionary/Model Codegen, Global Search, Dolt VC, and Vault SSH tunnels.",
+    "author": "Netcatty",
+    "repository": "binaricat/netcatty-database-plugin",
+    "commit": "e198669e6a2db84ccdbaa5687464bc77113a08db",
+    "license": "GPL-3.0-or-later",
+    "readme": "README.md",
+    "manifest": {
+      "manifestVersion": 1,
+      "id": "com.binaricat.netcatty-database",
+      "name": "netcatty-database",
+      "displayName": {
+        "en": "Netcatty Database",
+        "zh-CN": "Netcatty 数据库"
+      },
+      "description": {
+        "en": "Enterprise-grade multi-database IDE inside Netcatty covering 113 engine profiles (76 live pure-TS drivers across 13 families incl. SQL, CQL, Redis, MongoDB, Neo4j, Search/Vector, KV, RabbitMQ/Pulsar/MQTT/Kafka + 37 catalog entries), BI Dashboard across 53 engines (SQL/CQL/HTTP-SQL + MongoDB Aggregation), Catty Agent tools, Server Monitor, Users Admin, Data Compare, Mock Data, Data Dictionary/Model Codegen, Global Search, Dolt VC, and Vault SSH tunnels.",
+        "zh-CN": "内置于 Netcatty 的全功能企业级多数据库 IDE，覆盖 113 种引擎配置（76 个跨 13 大协议族原生驱动，含 SQL/CQL/Redis/MongoDB/Neo4j/检索向量/KV/RabbitMQ/Pulsar/MQTT/Kafka + 37 个目录引擎），支持 53 种引擎 BI 看板（SQL/CQL/HTTP-SQL + MongoDB 聚合）、Catty Agent 工具、服务监控、用户权限、数据对比、测试数据生成、数据字典与代码生成、全局搜索、Dolt 版本控制与 Vault SSH 隧道。"
+      },
+      "version": "0.3.0",
+      "publisher": "binaricat",
+      "license": "GPL-3.0-or-later",
+      "engines": {
+        "netcatty": ">=0.0.0",
+        "api": ">=0.1.0-internal.1 <0.2.0"
+      },
+      "features": {
+        "required": [
+          "views.host-drawn",
+          "views.vault-pages",
+          "metadata.brand-icon",
+          "ai.model-invocation",
+          "ai.agent-sessions",
+          "vault.host-actions",
+          "host.interactions",
+          "network.byte-streams",
+          "network.host-byte-streams"
+        ],
+        "optional": [
+          "ai.sidebar-tools"
+        ]
+      },
+      "main": {
+        "browser": "browser.js"
+      },
+      "activationEvents": [
+        "onView:com.binaricat.netcatty-database.workbench",
+        "onView:com.binaricat.netcatty-database.connection"
+      ],
+      "permissions": {
+        "required": [
+          "views"
+        ],
+        "optional": [
+          "storage",
+          "secrets",
+          "network.stream",
+          "network",
+          "clipboard.read",
+          {
+            "permission": "ai.invoke",
+            "resources": [
+              "*"
+            ],
+            "reason": "Draft, explain, optimize, and fix SQL queries using schema metadata / 使用数据库结构生成、解释、优化和修复 SQL 草稿"
+          },
+          {
+            "permission": "ai.agent.use",
+            "resources": [
+              "*"
+            ],
+            "reason": "Optional host Agent conversations for database guidance / 可选宿主 Agent 对话以提供数据库辅助"
+          },
+          {
+            "permission": "vault.metadata",
+            "resources": [
+              "*"
+            ],
+            "reason": "Select existing Netcatty Vault SSH hosts for database tunneling / 选择已有 Netcatty Vault SSH 主机建立数据库隧道"
+          },
+          {
+            "permission": "ui.interact",
+            "resources": [
+              "*"
+            ],
+            "reason": "Open and save local SQLite databases, SQL scripts, and CSV/JSON/XLSX exports via native file dialogs / 通过原生文件对话框打开和保存本地 SQLite、SQL 脚本及数据导出文件"
+          },
+          {
+            "permission": "network.hostStream",
+            "resources": [
+              "*"
+            ],
+            "reason": "Connect to remote databases through a user-selected Netcatty Vault SSH server without exposing SSH credentials / 通过选定的 Netcatty Vault SSH 主机隧道连接远端数据库，不暴露 SSH 凭证"
+          },
+          {
+            "permission": "clipboard.write",
+            "resources": [
+              "*"
+            ],
+            "reason": "Copy query results, SQL statements, and connection URIs to the clipboard / 复制查询结果、SQL 语句与连接 URI 到剪贴板"
+          }
+        ]
+      },
+      "contributes": {
+        "views": [
+          {
+            "id": "com.binaricat.netcatty-database.workbench",
+            "title": {
+              "en": "Database",
+              "zh-CN": "数据库"
+            },
+            "location": "vault-page",
+            "icon": {
+              "kind": "theme",
+              "name": "database"
+            }
+          },
+          {
+            "id": "com.binaricat.netcatty-database.connection",
+            "title": {
+              "en": "Database: New connection",
+              "zh-CN": "数据库：新建连接"
+            },
+            "location": "modal"
+          }
+        ]
+      },
+      "icon": {
+        "kind": "package",
+        "light": "assets/plugin-icon-light.png",
+        "dark": "assets/plugin-icon-dark.png"
+      }
+    }
+  },
+  {
     "id": "com.binaricat.netcatty-monitor",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "name": "Netcatty Monitor",
     "description": "Official agentless SSH fleet monitoring and server operations workbench with real-time CPU, memory, disk I/O, network, GPU & thermal charts, live process explorer, systemd/Docker/Podman services & logs, listening ports, and configurable threshold alerts.",
     "author": "Netcatty",
     "repository": "binaricat/netcatty-monitor-plugin",
-    "commit": "997199f596d8b8ff358908d936909280fca2f27d",
+    "commit": "b0d3f32f73084ff5098f00bcb813b8755fdf4b8c",
     "license": "GPL-3.0-or-later",
     "readme": "README.md",
     "manifest": {
@@ -213,7 +350,7 @@
         "en": "Agentless SSH fleet monitoring and server operations workbench inside Netcatty with real-time CPU, memory, disk I/O, network, GPU & thermal charts, live process explorer, systemd/Docker/Podman services & log tails, listening ports, and configurable threshold alerts.",
         "zh-CN": "内置于 Netcatty 的无 Agent SSH 服务器集群监控与运维工作台，提供实时 CPU、内存、磁盘 I/O、网络、GPU 与温度曲线，以及实时进程管理、systemd/Docker/Podman 服务与日志查看、监听端口分析与可配置阈值告警。"
       },
-      "version": "0.1.0",
+      "version": "0.2.0",
       "publisher": "binaricat",
       "license": "GPL-3.0-or-later",
       "homepage": "https://github.com/binaricat/netcatty-monitor-plugin",
@@ -264,7 +401,7 @@
             "resources": [
               "*"
             ],
-            "reason": "Export monitoring snapshots as JSON files via native save dialogs / 通过原生保存对话框导出监控快照 JSON 文件"
+            "reason": "Confirm destructive process, service, container, and panel actions via native dialogs and export JSON/Markdown diagnostic reports / 通过原生确认对话框确认进程、服务、容器及面板操作，并导出 JSON/Markdown 诊断报告"
           },
           {
             "permission": "clipboard.write",

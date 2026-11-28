@@ -36,3 +36,46 @@ test('brand results cannot survive uninstall or a changed package hash during de
     await assert.rejects(pending, /ownership changed/);
   }
 });
+
+test('catalog brand icon resolver verifies SHA-256/size/format, rasterizes, and caches', async () => {
+  const { createHash } = require('node:crypto');
+  const sourcePng = await fs.readFile(path.join(__dirname, '../..', 'examples/plugins/starter-netcatty/assets/logo-light.png'));
+  const sha = createHash('sha256').update(sourcePng).digest('hex');
+  const reference = { path: `/assets/${sha}.png`, sha256: sha, size: sourcePng.length };
+  let rasterCalls = 0;
+  let readCalls = 0;
+  const service = new PluginContributionIconService({
+    database: { getActivePlugin: () => null },
+    packageStore: {},
+    rasterizeIcon: async ({ body, maxEdge }) => {
+      rasterCalls += 1;
+      assert.equal(maxEdge, 128);
+      return body;
+    },
+  });
+  const req = {
+    sourceId: 'official',
+    reference,
+    read: async () => { readCalls += 1; return sourcePng; },
+  };
+  const first = await service.resolveCatalogBrandIcon(req);
+  assert.match(first, /^data:image\/png;base64,/);
+  assert.equal(readCalls, 1);
+  assert.equal(rasterCalls, 1);
+  // Cached hit avoids re-reading and re-rasterizing.
+  assert.equal(await service.resolveCatalogBrandIcon(req), first);
+  assert.equal(readCalls, 1);
+  assert.equal(rasterCalls, 1);
+  // Tampered bytes reject.
+  await assert.rejects(service.resolveCatalogBrandIcon({
+    sourceId: 'official',
+    reference: { ...reference, path: `/assets/${'b'.repeat(64)}.png`, sha256: 'b'.repeat(64) },
+    read: async () => sourcePng,
+  }), /Invalid plugin brand icon bytes/);
+  // Extension/magic mismatch rejects.
+  await assert.rejects(service.resolveCatalogBrandIcon({
+    sourceId: 'official',
+    reference: { ...reference, path: `/assets/${sha}.webp` },
+    read: async () => sourcePng,
+  }), /Brand icons require matching PNG or WebP|format/);
+});

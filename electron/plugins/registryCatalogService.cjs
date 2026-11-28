@@ -21,6 +21,7 @@ class RegistryCatalogService extends PluginCatalogService {
     this.error = null;
     this.refreshing = null;
     this.resolveAvatar = options.resolveAvatar;
+    this.resolveBrandIcon = options.resolveBrandIcon;
     this.resolveReadmeImage = options.resolveReadmeImage;
   }
   async refresh() {
@@ -97,6 +98,30 @@ class RegistryCatalogService extends PluginCatalogService {
     this.sourceGuard();
     this.selected(id, token);
     return Object.fromEntries(values.filter(Boolean));
+  }
+  async brandIcon(id, token) {
+    this.sourceGuard();
+    const entry = this.selected(id, token);
+    const resource = this.resources.get(tuple(entry));
+    const resolveOne = async (reference) => {
+      if (!reference || !this.resolveBrandIcon) return null;
+      try {
+        return await this.resolveBrandIcon({
+          sourceId: this.marketSource.id,
+          reference,
+          read: () => fetchVerified(reference, this.fetch, this.origin),
+        });
+      } catch {
+        return null;
+      }
+    };
+    const [light, dark] = await Promise.all([
+      resolveOne(resource?.iconLight ?? null),
+      resolveOne(resource?.iconDark ?? null),
+    ]);
+    this.sourceGuard();
+    this.selected(id, token);
+    return { light, dark };
   }
   async install(id, token) {
     this.selected(id, token);

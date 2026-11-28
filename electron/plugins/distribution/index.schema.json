@@ -120,7 +120,7 @@
                       "maxLength": 4096
                     },
                     "manifest": {
-                      "$ref": "https://netcatty.com/schemas/plugins/0.1.0-internal.1/plugin-contract.schema.json"
+                      "type": "object"
                     },
                     "artifact": {
                       "type": "object",

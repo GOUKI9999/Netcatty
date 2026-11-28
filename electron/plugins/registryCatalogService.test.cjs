@@ -31,7 +31,7 @@ test("offline first launch returns bundled source examples with no GitHub README
     install() { assert.fail("offline must not install"); },
   } });
   const snapshot = await service.list();
-  assert.equal(snapshot.source, "builtin"); assert.equal(snapshot.entries.length, 3);
+  assert.equal(snapshot.source, "builtin"); assert.equal(snapshot.entries.length, 4);
   await assert.rejects(service.readme(snapshot.entries[0].id, snapshot.entries[0].selectionToken), /No published README/);
   assert.equal(calls, 1);
   await assert.rejects(service.install(snapshot.entries[0].id, snapshot.entries[0].selectionToken), /browse-only/);
@@ -119,4 +119,85 @@ test("snapshot preparation failure leaves private resources and public tokens un
   assert.equal(service.resources, resources);
   service.fetch = async () => { throw new Error("offline"); };
   assert.deepEqual((await service.list()).entries, good.entries);
+});
+
+test("catalog brand icons are fetched from delivery.json, SHA-256 verified, rasterized, cached, and reject mismatched tokens, tampered bytes, or disabled sources", async () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const { digest } = require("./fixtures/staticDistributionFixture.cjs");
+  const { PluginContributionIconService } = require("./contributionIconService.cjs");
+  const lightBytes = fs.readFileSync(path.join(__dirname, "../..", "examples/plugins/starter-netcatty/assets/logo-light.png"));
+  const darkBytes = fs.readFileSync(path.join(__dirname, "../..", "examples/plugins/starter-netcatty/assets/logo-dark.png"));
+  const lightRef = { path: `/assets/${digest(lightBytes)}.png`, sha256: digest(lightBytes), size: lightBytes.length };
+  const darkRef = { path: `/assets/${digest(darkBytes)}.png`, sha256: digest(darkBytes), size: darkBytes.length };
+  const files = makeFiles(catalog, (_index, sidecar) => {
+    sidecar.schemaVersion = 2;
+    sidecar.plugins[0].iconLight = lightRef;
+    sidecar.plugins[0].iconDark = darkRef;
+  });
+  files.set(lightRef.path, lightBytes);
+  files.set(darkRef.path, darkBytes);
+
+  let rasterCalls = 0;
+  const iconService = new PluginContributionIconService({
+    database: { getActivePlugin: () => null },
+    packageStore: {},
+    rasterizeIcon: async ({ body, maxEdge }) => {
+      rasterCalls += 1;
+      assert.equal(maxEdge, 128);
+      return body;
+    },
+  });
+  const requests = [];
+  let allowed = true;
+  const service = new RegistryCatalogService({
+    fetch: async (url) => { requests.push(url); return responseFor(files, url); },
+    sourceGuard: () => { if (!allowed) throw new Error("disabled"); },
+    resolveBrandIcon: (request) => iconService.resolveCatalogBrandIcon(request),
+  });
+
+  const selected = (await service.list()).entries[0];
+  const first = await service.brandIcon(selected.id, selected.selectionToken);
+  assert.match(first.light, /^data:image\/png;base64,/);
+  assert.match(first.dark, /^data:image\/png;base64,/);
+  assert.equal(rasterCalls, 2);
+  assert.equal(requests.filter((url) => url.endsWith(lightRef.path)).length, 1);
+  assert.equal(requests.filter((url) => url.endsWith(darkRef.path)).length, 1);
+
+  // Second call for the same selection hits cache without re-fetching or re-rasterizing.
+  const cached = await service.brandIcon(selected.id, selected.selectionToken);
+  assert.deepEqual(cached, first);
+  assert.equal(rasterCalls, 2);
+  assert.equal(requests.filter((url) => url.endsWith(lightRef.path)).length, 1);
+  assert.equal(requests.filter((url) => url.endsWith(darkRef.path)).length, 1);
+
+  // Mismatched selectionToken is rejected.
+  await assert.rejects(service.brandIcon(selected.id, "invalid-token"), /changed/);
+
+  // Tampered bytes fail SHA-256 verification and never render or poison cache.
+  const tamperedFiles = makeFiles(catalog, (_index, sidecar) => {
+    sidecar.schemaVersion = 2;
+    sidecar.plugins[0].iconLight = lightRef;
+    sidecar.plugins[0].iconDark = null;
+  });
+  const tampered = Buffer.from(lightBytes);
+  tampered[tampered.length - 1] ^= 0xff;
+  tamperedFiles.set(lightRef.path, tampered);
+  let tamperedRasterCalls = 0;
+  const tamperedIconService = new PluginContributionIconService({
+    database: { getActivePlugin: () => null },
+    packageStore: {},
+    rasterizeIcon: async ({ body }) => { tamperedRasterCalls += 1; return body; },
+  });
+  const tamperedService = new RegistryCatalogService({
+    fetch: async (url) => responseFor(tamperedFiles, url),
+    resolveBrandIcon: (request) => tamperedIconService.resolveCatalogBrandIcon(request),
+  });
+  const tamperedEntry = (await tamperedService.list()).entries[0];
+  assert.deepEqual(await tamperedService.brandIcon(tamperedEntry.id, tamperedEntry.selectionToken), { light: null, dark: null });
+  assert.equal(tamperedRasterCalls, 0);
+
+  // Disabled source is rejected.
+  allowed = false;
+  await assert.rejects(service.brandIcon(selected.id, selected.selectionToken), /disabled/);
 });

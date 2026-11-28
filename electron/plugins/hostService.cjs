@@ -650,6 +650,7 @@ function createPluginHostService(options) {
       capabilitiesService,
       catalogService: new MarketSourcesService({ database, manager, fetch: options.electron.net?.fetch?.bind(options.electron.net),
         resolveAvatar: (request) => contributionIconService.resolveCatalogAvatar(request),
+        resolveBrandIcon: (request) => contributionIconService.resolveCatalogBrandIcon(request),
         resolveReadmeImage: require("./readmeImageService.cjs").createReadmeImageResolver({ BrowserWindow: options.electron.BrowserWindow }) }),
       companionSupervisor,
       contributionIconService,

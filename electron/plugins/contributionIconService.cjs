@@ -10,6 +10,7 @@ const { createPooledContributionIconRasterizer } = require("./contributionIconRa
 const MAX_ICON_SOURCE_BYTES = 512 * 1024;
 const MAX_ICON_PNG_BYTES = 512 * 1024;
 const MAX_ICON_EDGE = 64;
+const MAX_CATALOG_BRAND_ICON_EDGE = 128;
 const MAX_ICON_SOURCE_EDGE = 4_096;
 const MAX_ICON_SOURCE_PIXELS = 16 * 1024 * 1024;
 const MAX_CONCURRENT_ICON_RASTERIZATIONS = 2;
@@ -292,6 +293,42 @@ class PluginContributionIconService {
     return pending;
   }
 
+  // Called only with a host-selected, hash-bound registry brand-icon reference.
+  // Shares the isolated rasterizer, queue, cache, and in-flight deduplication.
+  async resolveCatalogBrandIcon({ sourceId, reference, read }) {
+    const key = JSON.stringify(["catalog-brand-icon", sourceId, reference.path, reference.sha256, reference.size]);
+    if (this.cache.has(key)) return this.cache.get(key);
+    if (this.pending.has(key)) return this.pending.get(key);
+    if (this.pending.size >= MAX_QUEUED_ICON_RASTERIZATIONS + MAX_CONCURRENT_ICON_RASTERIZATIONS) {
+      throw new Error("Plugin image queue is full");
+    }
+    const pending = (async () => {
+      const body = await read();
+      if (!Buffer.isBuffer(body) || body.length !== reference.size || body.length > 256 * 1024
+        || createHash("sha256").update(body).digest("hex") !== reference.sha256) {
+        throw new Error("Invalid plugin brand icon bytes");
+      }
+      const extension = path.extname(reference.path).toLowerCase();
+      if (![".png", ".webp"].includes(extension)) throw new Error("Invalid plugin brand icon format");
+      const { inspectPluginBrandIcon } = await import("@netcatty/plugin-contract");
+      const inspected = inspectPluginBrandIcon(body, reference.path);
+      if (inspected.mimeType !== (extension === ".png" ? "image/png" : "image/webp")) {
+        throw new Error("Plugin brand icon format mismatch");
+      }
+      const png = await this.rasterizeIcon({ body, ...inspected, maxEdge: MAX_CATALOG_BRAND_ICON_EDGE });
+      if (!Buffer.isBuffer(png) || !png.length || png.length > MAX_ICON_PNG_BYTES) {
+        throw new Error("Plugin brand icon output is too large");
+      }
+      inspectContributionIconSource(png, ".png", MAX_CATALOG_BRAND_ICON_EDGE);
+      const value = `data:image/png;base64,${png.toString("base64")}`;
+      if (this.cache.size >= 256) this.cache.clear();
+      this.cache.set(key, value);
+      return value;
+    })().finally(() => this.pending.delete(key));
+    this.pending.set(key, pending);
+    return pending;
+  }
+
   async #resolveUncached({ pluginId, plugin, icon, cacheKey }) {
     const useSingleFileVerify = typeof this.packageStore.readVerifiedPackageFile === "function";
     const packageRoot = useSingleFileVerify ? null : await this.packageStore.preparePackageRoot(plugin);
@@ -365,6 +402,7 @@ class PluginContributionIconService {
 
 module.exports = {
   MAX_ICON_EDGE,
+  MAX_CATALOG_BRAND_ICON_EDGE,
   MAX_CONCURRENT_ICON_RASTERIZATIONS,
   MAX_QUEUED_ICON_RASTERIZATIONS,
   MAX_ICON_SOURCE_EDGE,

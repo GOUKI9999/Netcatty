@@ -175,6 +175,7 @@ declare global {
     onPluginCatalogChanged?(callback: (event: { sourceId: string }) => void): () => void;
     getPluginCatalogReadme?(id: string, selectionToken?: string, sourceId?: string): Promise<string>;
     getPluginCatalogReadmeImages?(id: string, selectionToken?: string, sourceId?: string): Promise<Record<string, string>>;
+    getPluginCatalogBrandIcon?(id: string, selectionToken?: string, sourceId?: string): Promise<{ light: string | null; dark: string | null } | null>;
     installCatalogPlugin?(id: string, selectionToken?: string, sourceId?: string, acceptedSourceId?: string): Promise<NetcattyInstalledPlugin>;
     setPluginAIHostReady?(ready: boolean): Promise<boolean>;
     setPluginAgentHostReady?(ready: boolean): Promise<boolean>;

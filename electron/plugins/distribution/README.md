@@ -1,9 +1,12 @@
 # Pinned static distribution schemas
 
-`delivery.schema.json` and `index.schema.json` are unmodified UTF-8 files from
+`delivery.schema.json` and `index.schema.json` originate from
 binaricat/netcatty-plugins commit 7bfe23e5627e16ba63806de6dded5b2667c02984
-(PR 3). The host compiles them with the existing local plugin-contract schema;
-no schema reference causes network access.
+(PR 3); `index.schema.json` allows historical `versions[].entry.manifest` objects
+so immutable archived versions from older contract revisions do not block newer
+snapshots, while every `current` entry in `catalog.json` remains strictly
+validated against the local `PluginManifest` contract schema and deep-equal to
+its `index.json` entry. No schema reference causes network access.
 
 `../fixtures/static-distribution/` contains that commit's actual
 `distribution/bootstrap/v1/snapshot.json`, snapshot catalog/index/delivery and

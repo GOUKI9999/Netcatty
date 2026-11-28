@@ -82,7 +82,7 @@ export function PluginMarketplaceContent({ catalog, installed, selected, onSelec
           const isInstalled = installed.some((plugin) => plugin.id === item.id && sameSource(plugin));
           return <button key={item.id} type="button" data-plugin-id={item.id} aria-current={selected === item.id ? 'true' : undefined} onClick={() => choose(item.id)}
             className="plugin-card min-w-0 flex min-h-[200px] flex-col gap-3 rounded-lg bg-card p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <div className="flex items-center gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center"><PluginBrandIcon entry={item} size={32} className="text-muted-foreground" /></span><span className="min-w-0 break-words text-sm font-semibold leading-5">{item.name}</span></div>
+            <div className="flex items-center gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center"><PluginBrandIcon entry={item} sourceId={sourceId} size={32} className="text-muted-foreground" /></span><span className="min-w-0 break-words text-sm font-semibold leading-5">{item.name}</span></div>
             <PluginAuthorRow entry={item} sourceId={sourceId} />
             <p className="line-clamp-3 break-words text-sm leading-5 text-muted-foreground">{item.description}</p>
             <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-1 text-xs text-muted-foreground"><span>{item.version} · {item.license}</span><span className="text-foreground">{t('settings.plugins.manager.details')}</span></div>
@@ -92,7 +92,7 @@ export function PluginMarketplaceContent({ catalog, installed, selected, onSelec
       </div>}
       {entry && <article key={entry.id} aria-label={entry.name} className="plugin-marketplace-detail mx-auto w-full max-w-[920px] min-w-0 space-y-6 focus:outline-none">
         <Button variant="ghost" size="sm" onClick={back}><ArrowLeft size={14} className="mr-2" />{t('settings.plugins.market.back')}</Button>
-        <div className="space-y-2"><div className="flex items-center gap-3"><PluginBrandIcon entry={entry} size={48} /><h4 ref={detailRef} tabIndex={-1} className="break-words text-xl font-semibold focus:outline-none">{entry.name}</h4></div><PluginAuthorRow entry={entry} sourceId={sourceId} /><p className="text-xs text-muted-foreground">{entry.version} · {entry.license}</p>
+        <div className="space-y-2"><div className="flex items-center gap-3"><PluginBrandIcon entry={entry} sourceId={sourceId} size={48} /><h4 ref={detailRef} tabIndex={-1} className="break-words text-xl font-semibold focus:outline-none">{entry.name}</h4></div><PluginAuthorRow entry={entry} sourceId={sourceId} /><p className="text-xs text-muted-foreground">{entry.version} · {entry.license}</p>
           {installedEntry && <p className="text-xs text-muted-foreground">{t('settings.plugins.market.installed')} · {installedEntry.activeVersion} · {t(installedEntry.enabled ? 'settings.plugins.manager.enabled' : 'settings.plugins.manager.disabled')}</p>}
         </div>
         {installedEntry?.runtime?.lastError && <p role="status" className="break-words text-xs text-destructive">{t('settings.plugins.manager.lastError')}: {installedEntry.runtime.lastError}</p>}
