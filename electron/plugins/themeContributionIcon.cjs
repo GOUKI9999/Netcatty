@@ -7,6 +7,7 @@ const THEME_ICON_SHAPES = Object.freeze({
   command: '<path d="M9 6V5a3 3 0 10-3 3h12a3 3 0 10-3-3v14a3 3 0 103-3H6a3 3 0 103 3V6z"/>',
   file: '<path d="M6 3h8l4 4v14H6zM14 3v5h4"/>',
   folder: '<path d="M3 6h7l2 2h9v11H3z"/>',
+  gauge: '<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l8-8M15 8l3 3M17 6l2 2"/>',
   "layout-panel": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M9 10h12"/>',

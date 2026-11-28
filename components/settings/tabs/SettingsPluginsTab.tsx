@@ -40,8 +40,8 @@ function PluginManagementContent({ manager }: {
           <Button variant="outline" size="sm" disabled={!manager.available || manager.busy} onClick={() => { setPluginView('installed'); void manager.importPackage(); }}><FolderOpen size={14} className="mr-2" />{t('settings.plugins.manager.import')}</Button>
           </div>
         </div>
-        <TabsContent forceMount hidden={pluginView !== 'marketplace'} value="marketplace" className="m-0 space-y-6"><PluginMarketplace installed={manager.plugins} toolbarContainer={pluginView === 'marketplace' ? catalogToolbar : undefined} noVault={manager.credentialStorageAvailable === false} /></TabsContent>
-        <TabsContent forceMount hidden={pluginView !== 'thirdparty'} value="thirdparty" className="m-0 space-y-6"><PluginThirdPartyMarket installed={manager.plugins} toolbarContainer={pluginView === 'thirdparty' ? catalogToolbar : undefined} noVault={manager.credentialStorageAvailable === false} /></TabsContent>
+        <TabsContent forceMount hidden={pluginView !== 'marketplace'} value="marketplace" className="m-0 space-y-6"><PluginMarketplace installed={manager.plugins} toolbarContainer={pluginView === 'marketplace' ? catalogToolbar : undefined} noVault={manager.credentialStorageAvailable === false} onToggleEnabled={(pluginId, enabled) => manager.setEnabled(pluginId, enabled)} managerBusy={manager.busy} /></TabsContent>
+        <TabsContent forceMount hidden={pluginView !== 'thirdparty'} value="thirdparty" className="m-0 space-y-6"><PluginThirdPartyMarket installed={manager.plugins} toolbarContainer={pluginView === 'thirdparty' ? catalogToolbar : undefined} noVault={manager.credentialStorageAvailable === false} onToggleEnabled={(pluginId, enabled) => manager.setEnabled(pluginId, enabled)} managerBusy={manager.busy} /></TabsContent>
         <TabsContent value="installed" className="m-0 space-y-6">
         <PluginPackageManager manager={manager} initialSelectedId={selectedInstalled} onSelectionChange={(id) => { setSelectedInstalled(id); }} detailActions={selectedInstalled && <PluginSettingsEntry key={`settings:${selectedInstalled}`} pluginId={selectedInstalled} />} />
         </TabsContent>

@@ -61,7 +61,7 @@ test('catalog keeps search during selection/back, switches detail, and displays 
     assert.match(detailText, /Incompatible with this host/);
     assert.match(detailText, /Last recorded error/);
     assert.equal(renderer.root.findAllByType('details').length, 0, 'permissions are not hidden in a disclosure');
-    assert.equal(renderer.root.findAll((node) => node.type === 'button' && node.children.includes('Install this version (disabled)')).length, 0, 'source-only cards have no install action');
+    assert.equal(renderer.root.findAll((node) => node.type === 'button' && node.children.includes('Install')).length, 0, 'source-only cards have no install action');
     const back = () => renderer.root.findAllByType('button').find((node) => node.children.includes('All plugins'))!;
     await act(async () => back().props.onClick());
     assert.equal(renderer.root.findAllByType('article').length, 0);
@@ -147,7 +147,7 @@ test('offline catalog warning keeps details visible and disables market installa
     selected={downloadable.id} onSelect={() => {}} installed={[]} /></I18nProvider>);
   assert.match(html, /Offline catalog · installation unavailable/);
   assert.match(html, /Compatibility and permissions/);
-  assert.match(html, /<button[^>]*disabled=""[^>]*>Install this version/);
+  assert.match(html, /<button[^>]*disabled=""[^>]*>Install<\/button>/);
   assert.match(html, /Notices: 1/);
 });
 
@@ -158,13 +158,21 @@ test('manual refresh remains available after success and is disabled while loadi
   assert.match(loading, /<button[^>]*disabled=""[^>]*>Refresh<\/button>/);
 });
 
-test('replacing an installed plugin discloses that its running version will stop beside the install action', () => {
+test('replacing an installed plugin discloses that its running version will stop and offers inline enable/disable', () => {
   const downloadable = { ...entries[0], artifact: { url: 'https://github.com/example/plugin/releases/download/v1/plugin.ncpkg', sha256: 'a'.repeat(64) } };
+  const freshHtml = renderToStaticMarkup(<I18nProvider locale="en"><PluginMarketplaceContent
+    catalog={{ ...catalog, entries: [downloadable] }} selected={downloadable.id} onSelect={() => {}}
+    installed={[]} onToggleEnabled={() => {}} /></I18nProvider>);
+  assert.doesNotMatch(freshHtml, /This replaces and stops/);
+  assert.match(freshHtml, />Install<\/button>/);
+  assert.doesNotMatch(freshHtml, /disabled\)/i);
   const html = renderToStaticMarkup(<I18nProvider locale="en"><PluginMarketplaceContent
     catalog={{ ...catalog, entries: [downloadable] }} selected={downloadable.id} onSelect={() => {}}
-    installed={[{ id: downloadable.id, activeVersion: '0.9.0', enabled: true, source: { id: 'official', kind: 'official', name: 'Official', origin: 'https://plugins.netcatty.app' } } as NetcattyInstalledPlugin]} /></I18nProvider>);
+    installed={[{ id: downloadable.id, activeVersion: '0.9.0', enabled: true, source: { id: 'official', kind: 'official', name: 'Official', origin: 'https://plugins.netcatty.app' } } as NetcattyInstalledPlugin]}
+    onToggleEnabled={() => {}} /></I18nProvider>);
   assert.match(html, /<p[^>]*>This replaces and stops the installed version\./);
-  assert.ok(html.indexOf('This replaces and stops') < html.indexOf('Install this version (disabled)'));
+  assert.ok(html.indexOf('This replaces and stops') < html.indexOf('>Install</button>'));
+  assert.match(html, />Disable<\/button>/);
 });
 
 test('a mirror cannot claim another source installation or offer cross-source replacement', () => {
@@ -178,7 +186,7 @@ test('a mirror cannot claim another source installation or offer cross-source re
     marketSource={mirror} selected={downloadable.id} onSelect={() => {}} installed={[existing]} /></I18nProvider>);
   assert.match(detail, /installed from another source/);
   assert.match(detail, /https:\/\/plugins.netcatty.app/);
-  assert.match(detail, /disabled=""[^>]*>Install this version/);
+  assert.match(detail, /disabled=""[^>]*>Install<\/button>/);
 });
 
 test('catalog search matches name, author and description without case sensitivity', () => {

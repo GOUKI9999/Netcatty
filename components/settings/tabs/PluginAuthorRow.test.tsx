@@ -108,10 +108,11 @@ test('mounted author rows load only when visible, retain fallbacks, cancel stale
     const image = document.querySelector('img')!;
     assert.equal(image.getAttribute('src'), identity.avatar); assert.equal(image.width, 16); assert.equal(image.height, 16);
     const badge = document.querySelector<HTMLElement>('[data-plugin-official-maintainer]')!;
-    assert.equal(badge.textContent, 'Official maintainer'); assert.match(badge.title, /not a safety certification/);
-    assert.ok(badge.classList.contains('border-0'));
-    assert.ok(badge.classList.contains('bg-amber-500/15')); assert.ok(badge.classList.contains('dark:bg-amber-400/15'));
-    assert.ok(badge.classList.contains('text-amber-800')); assert.ok(badge.classList.contains('dark:text-amber-300'));
+    assert.equal(badge.getAttribute('aria-label'), 'Official maintainer');
+    assert.match(badge.title, /Official maintainer/);
+    assert.match(badge.title, /not a safety certification/);
+    assert.ok(badge.classList.contains('text-primary'));
+    assert.ok(badge.querySelector('svg[aria-hidden="true"]'));
     document.documentElement.classList.add('dark');
     assert.ok(document.querySelector('[data-plugin-author-row]')?.classList.contains('items-center'));
     await act(async () => image.dispatchEvent(new Event('error')));

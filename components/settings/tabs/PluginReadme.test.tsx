@@ -21,3 +21,25 @@ test('README only renders registered local rasterized images and placeholders ot
   assert.match(html, /\[bad\]/);
   assert.doesNotMatch(html, /evil\.test/);
 });
+
+test('README renders GitHub-style centered HTML headers and GFM pipe tables cleanly without leaking raw HTML or remote images', () => {
+  const md = [
+    '<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/icon.svg"><img src="assets/icon.svg" alt="Icon" width="84"></picture></p>',
+    '<h1 align="center">Netcatty Database</h1>',
+    '<p align="center"><strong>Enterprise IDE &amp; BI Dashboard</strong></p>',
+    '<p align="center"><a href="https://github.com/binaricat/netcatty-database-plugin"><img src="https://img.shields.io/badge/version-v0.3.0-0ea5e9" alt="v0.3.0"></a></p>',
+    '',
+    '| Engine | Status |',
+    '| --- | --- |',
+    '| PostgreSQL | **Live** |',
+    '| MongoDB | `Aggregation` |',
+  ].join('\n');
+  const html = renderToStaticMarkup(<PluginReadme markdown={md} />);
+  assert.match(html, /<h3[^>]*text-center[^>]*>Netcatty Database<\/h3>/);
+  assert.match(html, /<strong>Enterprise IDE &amp; BI Dashboard<\/strong>/);
+  assert.doesNotMatch(html, /&lt;p align=/);
+  assert.doesNotMatch(html, /&lt;picture&gt;/);
+  assert.doesNotMatch(html, /<(img|picture|source)\b/);
+  assert.doesNotMatch(html, /shields\.io/);
+  assert.match(html, /<table[^>]*>.*<th[^>]*>Engine<\/th>.*<td[^>]*>PostgreSQL<\/td>.*<strong>Live<\/strong>/);
+});

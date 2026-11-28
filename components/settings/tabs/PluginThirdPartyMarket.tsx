@@ -6,8 +6,8 @@ import { Input } from '../../ui/input';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '../../ui/dialog';
 import { PluginMarketplace } from './PluginMarketplace';
 
-export function PluginThirdPartyMarket({ installed, toolbarContainer, noVault }: {
-  installed: NetcattyInstalledPlugin[]; toolbarContainer?: HTMLElement | null; noVault?: boolean;
+export function PluginThirdPartyMarket({ installed, toolbarContainer, noVault, onToggleEnabled, managerBusy }: {
+  installed: NetcattyInstalledPlugin[]; toolbarContainer?: HTMLElement | null; noVault?: boolean; onToggleEnabled?: (pluginId: string, enabled: boolean) => Promise<unknown> | void; managerBusy?: boolean;
 }) {
   const { t } = useI18n();
   const model = usePluginSources();
@@ -36,7 +36,7 @@ export function PluginThirdPartyMarket({ installed, toolbarContainer, noVault }:
     {!source && <div className="py-8 text-center text-sm text-muted-foreground"><p>{t('settings.plugins.sources.empty')}</p><Button className="mt-3" variant="outline" onClick={openManager}>{t('settings.plugins.sources.add')}</Button></div>}
     {/* Keep each visited source mounted to preserve its own selection/search/scroll. */}
     {sources.filter((item) => item.enabled && (item.id === selected || visited.includes(item.id))).map((item) => {
-      return <div key={item.id} hidden={item.id !== source?.id}><PluginMarketplace source={item} installed={installed} toolbarContainer={item.id === source?.id ? toolbarContainer : undefined} noVault={noVault} /></div>;
+      return <div key={item.id} hidden={item.id !== source?.id}><PluginMarketplace source={item} installed={installed} toolbarContainer={item.id === source?.id ? toolbarContainer : undefined} noVault={noVault} onToggleEnabled={onToggleEnabled} managerBusy={managerBusy} /></div>;
     })}
     <Dialog open={managing} onOpenChange={setManaging}><DialogContent className="max-h-[85vh] overflow-y-auto" onCloseAutoFocus={(event) => { event.preventDefault(); opener.current?.focus(); }}>
       <DialogTitle>{t('settings.plugins.sources.manage')}</DialogTitle><DialogDescription>{t('settings.plugins.sources.risk')}</DialogDescription>

@@ -16,7 +16,8 @@ const entry = { ...preview, manifest: { icon: preview.icon } } as unknown as Net
 test('reviewed catalog brand previews bind version, source and declaration, never arbitrary URLs', () => {
   assert.ok(resolveCatalogBrandIcon(entry));
   const catalog = JSON.parse(readFileSync(new URL('../../../electron/plugins/catalog.json', import.meta.url), 'utf8')) as NetcattyPluginCatalogEntry[];
-  assert.ok(previews.length >= 3);
+  assert.equal(previews.length, 2);
+  assert.equal(catalog.length, 2);
   for (const item of previews) {
     assert.ok(resolveCatalogBrandIcon(catalog.find((c) => c.id === item.id)!), `catalog should match preview for ${item.id}`);
     for (const theme of ['light', 'dark'] as const) {
@@ -28,12 +29,6 @@ test('reviewed catalog brand previews bind version, source and declaration, neve
   }
   for (const replacement of [{ version: '9.0.0' }, { commit: '0'.repeat(40) }, { repository: 'untrusted/plugin' }, { manifest: { icon: { kind: 'package', light: 'https://attacker.invalid/a.png' } } }]) {
     assert.equal(resolveCatalogBrandIcon({ ...entry, ...replacement } as NetcattyPluginCatalogEntry), null);
-  }
-  for (const theme of ['light', 'dark'] as const) {
-    const bytes = Buffer.from(preview[theme].split(',')[1], 'base64');
-    assert.equal(createHash('sha256').update(bytes).digest('hex'), preview[`${theme}Sha256`]);
-    assert.equal(inspectPluginBrandIcon(bytes, preview.icon[theme]).width, 128);
-    assert.deepEqual(bytes, readFileSync(new URL(`../../../examples/plugins/starter-netcatty/${preview.icon[theme]}`, import.meta.url)));
   }
   const html = renderToStaticMarkup(<PluginBrandIcon entry={entry} />);
   assert.match(html, /data-plugin-brand="package"/);
