@@ -76,7 +76,7 @@ interface AIChatPanelContentProps {
   onDismissPanelCommandNote?: () => void;
   /** Manual durability escape hatch: export/import the whole session store. */
   onExportSessions?: () => void;
-  onImportSessions?: () => void;
+  onImportSessions?: (mode?: import('../application/state/aiSessionsBackup').AiSessionsImportMode) => void;
   /** Global session manager slot rendered by the drawer's "all chats" tab (#4098). */
   globalManagerNode?: React.ReactNode;
   /** Undo last turn is offered at a safe boundary (never mid-tool / mid-compaction). */

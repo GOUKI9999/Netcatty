@@ -70,22 +70,18 @@ test("global rows cover every scope: live terminal, other terminal, workspace, c
   assert.equal(byId.get("s-term")!.scopeState, "idle");
   assert.equal(byId.get("s-term")!.scopeLabel, "edge");
   assert.equal(byId.get("s-term")!.isCurrentView, true);
-  assert.equal(byId.get("s-term")!.canActivate, true);
 
   assert.equal(byId.get("s-other")!.scopeState, "idle");
   assert.equal(byId.get("s-other")!.scopeLabel, "core");
   assert.equal(byId.get("s-other")!.isCurrentView, false);
   // Every chat is directly openable when the viewing panel has a live scope target.
-  assert.equal(byId.get("s-other")!.canActivate, true);
 
   assert.equal(byId.get("s-ws")!.scopeState, "idle");
   assert.equal(byId.get("s-ws")!.scopeLabel, "Prod");
-  assert.equal(byId.get("s-ws")!.canActivate, true);
 
   // Past/closed terminal chats show their original host label instead of "Detached".
   assert.equal(byId.get("s-dangling-host")!.scopeState, "dangling");
   assert.equal(byId.get("s-dangling-host")!.scopeLabel, "prod-web-01");
-  assert.equal(byId.get("s-dangling-host")!.canActivate, true);
 
   // Without a known host, leave scopeLabel empty rather than showing technical jargon.
   assert.equal(byId.get("s-dangling")!.scopeState, "dangling");
@@ -166,10 +162,10 @@ test("workspace member and hidden terminal active pointers are not treated as ju
   assert.equal(byId.get("s-hidden-active")!.scopeState, "idle");
 });
 
-test("rows sort by updatedAt descending and carry agent labels + counts", () => {
+test("rows sort by last message rather than a later title edit and carry agent labels and counts", () => {
   const input = baseInput();
   input.sessions = [
-    baseSession({ id: "old", updatedAt: 1_000, messages: [{ id: "m1", role: "user", timestamp: 0, content: "a" }] }),
+    baseSession({ id: "old", updatedAt: 9_000, messages: [{ id: "m1", role: "user", timestamp: 0, content: "a" }] }),
     baseSession({ id: "new", updatedAt: 2_000, agentId: "codex", messages: [{ id: "m1", role: "user", timestamp: 0, content: "a" }, { id: "m2", role: "assistant", timestamp: 1, content: "b" }] }),
   ] as AISession[];
   const rows = buildGlobalManagerRows(input);

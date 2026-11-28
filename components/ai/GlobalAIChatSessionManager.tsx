@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Download, FolderInput, MoreHorizontal, Pencil, Search, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Download, FolderInput, MoreHorizontal, Pencil, Search, Trash2, X } from 'lucide-react';
 import type { AISession, ExternalAgentConfig } from '../../infrastructure/ai/types';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { cn } from '../../lib/utils';
@@ -28,11 +28,7 @@ import {
 // -------------------------------------------------------------------
 // Global AI Session Manager
 // -------------------------------------------------------------------
-// Scope-agnostic view over all saved AI chats. Clicking any chat opens
-// it directly in the viewing panel (automatically attaching past chats
-// to the current panel). Secondary management actions (rename, export,
-// move to another open terminal/workspace, confirm-gated delete) live
-// inside a single overflow menu so rows stay calm and scannable.
+// History can be inspected without moving the chat into the current panel.
 // -------------------------------------------------------------------
 
 interface GlobalAIChatSessionManagerProps {
@@ -61,6 +57,7 @@ interface GlobalAIChatSessionManagerProps {
 
 const MANAGER_RENDER_BATCH = 80;
 const MANAGER_RENDER_STEP = 60;
+const SESSION_COLUMNS = 'grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1fr)_1rem] items-center gap-1.5';
 
 export const GlobalAIChatSessionManager: React.FC<GlobalAIChatSessionManagerProps> = ({
   sessions,
@@ -80,7 +77,7 @@ export const GlobalAIChatSessionManager: React.FC<GlobalAIChatSessionManagerProp
   onDelete,
   onExport,
 }) => {
-  const { t } = useI18n();
+  const { t, resolvedLocale } = useI18n();
   const [searchQuery, setSearchQuery] = useState('');
   const [agentFilter, setAgentFilter] = useState<string>('all');
   const [renderCount, setRenderCount] = useState(MANAGER_RENDER_BATCH);
@@ -89,6 +86,8 @@ export const GlobalAIChatSessionManager: React.FC<GlobalAIChatSessionManagerProp
   const [openMenuSessionId, setOpenMenuSessionId] = useState<string | null>(null);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
+  const [previewSessionId, setPreviewSessionId] = useState<string | null>(null);
+  const [previewLimit, setPreviewLimit] = useState(MANAGER_RENDER_BATCH);
   const renameInputRef = useRef<HTMLInputElement>(null);
 
   const rows = useMemo(
@@ -131,6 +130,7 @@ export const GlobalAIChatSessionManager: React.FC<GlobalAIChatSessionManagerProp
 
   const displayedRows = filteredRows.slice(0, renderCount);
   const hiddenRowCount = Math.max(0, filteredRows.length - renderCount);
+  const preview = rows.find(row => row.session.id === previewSessionId);
 
   const commitDelete = () => {
     if (!deleteTarget) return;
@@ -184,8 +184,69 @@ export const GlobalAIChatSessionManager: React.FC<GlobalAIChatSessionManagerProp
       const focused = onFocusScope(row.activeElsewhereTarget);
       if (focused !== false) return;
     }
-    onSelect(row.session.id);
+    if (row.isCurrentView || row.isCurrentActive) {
+      onSelect(row.session.id);
+      return;
+    }
+    setPreviewLimit(MANAGER_RENDER_BATCH);
+    setPreviewSessionId(row.session.id);
   };
+
+  if (preview) {
+    const messages = preview.session.messages.filter(message => message.role === 'user' || message.role === 'assistant');
+    return (
+      <div className="flex flex-1 min-h-0 flex-col" data-section="ai-manager-preview">
+        <div className="flex items-center gap-2 border-b border-border/30 px-3 py-2">
+          <button
+            type="button"
+            onClick={() => setPreviewSessionId(null)}
+            aria-label={t('common.back')}
+            className="shrink-0 text-muted-foreground hover:text-foreground"
+          >
+            <ArrowLeft size={15} />
+          </button>
+          <span className="min-w-0 flex-1 truncate text-sm" title={preview.title}>{preview.title}</span>
+          {currentScopeTargetId && (
+            <button
+              type="button"
+              className="shrink-0 text-xs text-primary hover:underline"
+              onClick={() => {
+                onRebind(preview.session.id, {
+                  type: currentScopeType,
+                  targetId: currentScopeTargetId,
+                  label: '',
+                  hostIds: currentScopeHostIds?.length ? [...currentScopeHostIds] : undefined,
+                });
+                setPreviewSessionId(null);
+              }}
+            >
+              {t('ai.chat.managerContinueHere')}
+            </button>
+          )}
+        </div>
+        <ScrollArea className="flex-1">
+          <div className="space-y-3 px-3 py-3">
+            {messages.length > previewLimit && (
+              <button type="button" className="text-xs text-primary hover:underline"
+                onClick={() => setPreviewLimit(limit => limit + MANAGER_RENDER_STEP)}
+              >
+                {t('ai.chat.managerEarlierMessages')}
+              </button>
+            )}
+            {messages.slice(-previewLimit).map(message => (
+              <div key={message.id} className="rounded-md bg-muted/40 p-2 text-sm">
+                <div className="mb-1 text-xs font-medium text-muted-foreground">
+                  {message.role === 'user' ? t('ai.chat.managerYou') : preview.agentLabel}
+                </div>
+                <div className="whitespace-pre-wrap break-words">{message.content}</div>
+              </div>
+            ))}
+            {messages.length === 0 && <p className="text-xs text-muted-foreground">{t('ai.chat.managerNoMessages')}</p>}
+          </div>
+        </ScrollArea>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 flex flex-col min-h-0" data-section="ai-global-session-manager">
@@ -237,7 +298,7 @@ export const GlobalAIChatSessionManager: React.FC<GlobalAIChatSessionManagerProp
         )}
       </div>
       <ScrollArea className="flex-1">
-        <div className="px-3">
+        <div className="px-3" role="table" aria-label={t('ai.chat.allSessions')}>
           {filteredRows.length === 0 ? (
             <div className="py-12 text-center">
               <p className="text-[13px] text-muted-foreground/40">
@@ -246,6 +307,13 @@ export const GlobalAIChatSessionManager: React.FC<GlobalAIChatSessionManagerProp
             </div>
           ) : (
             <>
+              <div role="row" className={cn(SESSION_COLUMNS, 'border-b border-border/30 py-2 text-[11px] text-muted-foreground')}>
+                <span role="columnheader" className="truncate">{t('ai.chat.managerColumnChat')}</span>
+                <span role="columnheader" className="truncate">{t('ai.chat.managerColumnAgent')}</span>
+                <span role="columnheader" className="truncate">{t('ai.chat.managerColumnScope')}</span>
+                <span role="columnheader" className="truncate">{t('ai.chat.managerColumnTime')}</span>
+                <span role="columnheader" className="sr-only">{t('ai.chat.managerMoreActions')}</span>
+              </div>
               {hiddenRowCount > 0 && (
                 <button
                   type="button"
@@ -260,41 +328,35 @@ export const GlobalAIChatSessionManager: React.FC<GlobalAIChatSessionManagerProp
                 const canMoveElsewhere = otherMoveTargets.length > 0;
                 const isRenaming = renamingSessionId === row.session.id;
                 const isMenuOpen = openMenuSessionId === row.session.id;
-                const subtitleParts: string[] = [];
-                if (row.scopeLabel) subtitleParts.push(row.scopeLabel);
-                if (showAgentMeta) subtitleParts.push(row.agentLabel);
-                if (row.messageCount > 0) {
-                  subtitleParts.push(
-                    t('ai.chat.managerMessagesCount').replace('{n}', String(row.messageCount)),
-                  );
-                }
+                const historicalScope = row.session.scopeLabel || row.scopeLabel;
+                const lastMessage = new Date(row.lastMessageAt);
 
                 return (
                   <React.Fragment key={row.session.id}>
                     <div
-                      role="button"
-                      tabIndex={row.canActivate ? 0 : -1}
+                      role="row"
+                      tabIndex={0}
                       onClick={() => {
-                        if (!isRenaming && row.canActivate) activateRow(row);
+                        if (!isRenaming) activateRow(row);
                       }}
                       onKeyDown={(e) => {
                         if (e.target !== e.currentTarget) return;
-                        if (!isRenaming && row.canActivate && (e.key === 'Enter' || e.key === ' ')) {
+                        if (!isRenaming && (e.key === 'Enter' || e.key === ' ')) {
                           e.preventDefault();
                           activateRow(row);
                         }
                       }}
                       className={cn(
-                        SESSION_HISTORY_ROW_CLASSNAMES.row,
+                        SESSION_COLUMNS,
+                        'group cursor-pointer border-b border-border/20 py-2.5 text-left transition-colors',
                         row.isCurrentActive
                           ? 'text-foreground'
                           : 'text-foreground/75 hover:text-foreground',
-                        !row.canActivate && 'cursor-default',
                       )}
                       data-session-id={row.session.id}
                       data-scope-state={row.scopeState}
                     >
-                      <div className="min-w-0">
+                      <div role="cell" className="min-w-0">
                         <div className="flex items-center gap-1.5 min-w-0">
                           {row.isCurrentActive && (
                             <span
@@ -335,23 +397,22 @@ export const GlobalAIChatSessionManager: React.FC<GlobalAIChatSessionManagerProp
                             </span>
                           )}
                         </div>
-                        {subtitleParts.length > 0 && (
-                          <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground/50 min-w-0">
-                            {subtitleParts.map((part, index) => (
-                              <React.Fragment key={`${row.session.id}-meta-${index}`}>
-                                {index > 0 && <span aria-hidden>·</span>}
-                                <span className={index === 0 ? 'truncate' : 'shrink-0'}>
-                                  {part}
-                                </span>
-                              </React.Fragment>
-                            ))}
+                        {row.messageCount > 0 && (
+                          <div className="mt-0.5 truncate text-[11px] text-muted-foreground/70">
+                            {t('ai.chat.managerMessagesCount').replace('{n}', String(row.messageCount))}
                           </div>
                         )}
                       </div>
-                      <div className={SESSION_HISTORY_ROW_CLASSNAMES.meta}>
-                        <span className={SESSION_HISTORY_ROW_CLASSNAMES.time}>
-                          {formatRelativeTime(new Date(row.session.updatedAt), t)}
-                        </span>
+                      <div role="cell" className="truncate text-xs text-muted-foreground" title={row.agentLabel}>{row.agentLabel}</div>
+                      <div role="cell" className="truncate text-xs text-muted-foreground" title={historicalScope}>{historicalScope}</div>
+                      <div role="cell" className="min-w-0 truncate text-xs text-muted-foreground">
+                        {Number.isFinite(lastMessage.getTime()) && (
+                          <time dateTime={lastMessage.toISOString()} title={lastMessage.toLocaleString(resolvedLocale)}>
+                            {formatRelativeTime(lastMessage, t)}
+                          </time>
+                        )}
+                      </div>
+                      <div role="cell" className="flex justify-end">
                         <Dropdown
                           open={isMenuOpen}
                           onOpenChange={(open) => setOpenMenuSessionId(open ? row.session.id : null)}

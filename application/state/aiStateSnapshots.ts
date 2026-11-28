@@ -29,7 +29,7 @@ import {
 import { emitAIStateChanged } from './aiStateEvents';
 import { peekAgentRuntimeCleanup } from '../../infrastructure/ai/harness/agentRuntimeHandle';
 import { setReversibleModelPrivacy } from '../../infrastructure/ai/harness/modelSecretRedaction';
-import { DebouncedBackupMirror, readLiveSessionsArray, type BackupMirrorInput } from './aiSessionsBackup';
+import { DebouncedBackupMirror, readLiveSessionsArray, type AiSessionsBackupBridge, type BackupMirrorInput } from './aiSessionsBackup';
 import {
   idbDeleteSessionIds,
   idbPutMeta,
@@ -41,7 +41,7 @@ import {
 } from './aiSessionIdbStorage';
 
 /** Typed accessor for the Electron IPC bridge exposed on `window.netcatty`. */
-export interface AIBridge {
+export interface AIBridge extends AiSessionsBackupBridge {
   aiSdkAgentCleanup?: (chatSessionId: string) => Promise<{ ok: boolean }>;
   aiPrivacyClearSession?: (chatSessionId: string) => Promise<{ ok: boolean; error?: string }>;
   deleteChatToolOutputsTemp?: (chatSessionId: string) => Promise<{ deletedCount: number }>;
@@ -52,10 +52,6 @@ export interface AIBridge {
   aiMcpSetCommandTimeout?: (timeout: number) => Promise<unknown> | unknown;
   aiMcpSetMaxIterations?: (maxIterations: number) => Promise<unknown> | unknown;
   /** Durability mirror: write one timestamped backup generation to disk. */
-  aiSessionsBackupWrite?: (payload: { json: string }) => Promise<{ ok: boolean }>;
-  aiSessionsBackupReadLatest?: () => Promise<{ ok: boolean; json?: string }>;
-  aiSessionsBackupExport?: (payload: { json: string }) => Promise<{ success: boolean; filePath?: string }>;
-  aiSessionsBackupImport?: () => Promise<{ success: boolean; json?: string }>;
 }
 
 export function getAIBridge() {
@@ -372,6 +368,7 @@ function queueIdbSessionSync(
   removedIds: string[],
   prevById: Map<string, AISession>,
   persisted: AISession[],
+  fromSync: boolean,
 ) {
   if (changed.length === 0 && removedIds.length === 0) return;
   idbWriteQueue = idbWriteQueue
@@ -384,7 +381,7 @@ function queueIdbSessionSync(
       if (removedIds.length > 0) await idbDeleteSessionIds(db, removedIds);
       await idbPutMeta(db, 'schemaVersion', 1);
       await idbPutMeta(db, 'lastWriteAt', Date.now());
-      publishAiSessionsIdbChange();
+      publishAiSessionsIdbChange(!fromSync);
     })
     .catch((error) => {
       // IndexedDB failures must never break the in-memory session state.
@@ -472,7 +469,7 @@ let lastMirroredSessions: AISession[] | null = null;
  */
 export function writeSessionsForStorage(
   sessions: AISession[],
-  options?: { deletedSessionIds?: readonly string[] },
+  options?: { deletedSessionIds?: readonly string[]; fromSync?: boolean },
 ): boolean {
   try {
     // Explicitly deleted ids never count as cap eviction (they also must not
@@ -514,7 +511,7 @@ export function writeSessionsForStorage(
         lastMirroredSessions = persisted;
       }
     }
-    queueIdbSessionSync(changed, removedIds, prevById, persisted);
+    queueIdbSessionSync(changed, removedIds, prevById, persisted, options?.fromSync === true);
     return true;
   } catch (error) {
     console.warn('[AIState] Failed to persist AI sessions:', error);

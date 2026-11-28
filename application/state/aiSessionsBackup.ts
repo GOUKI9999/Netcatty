@@ -1,4 +1,5 @@
 import type { AISession } from '../../infrastructure/ai/types';
+import { aiSessionTranscriptsEqual, mergeAiSessionLists } from '../../domain/syncMerge';
 
 /**
  * Renderer-side logic for the AI session durability layer (issue #4015 R2
@@ -15,7 +16,7 @@ export interface AiSessionsBackupBridge {
   aiSessionsBackupWrite?: (payload: { json: string }) => Promise<{ ok: boolean }>;
   aiSessionsBackupReadLatest?: () => Promise<{ ok: boolean; json?: string }>;
   aiSessionsBackupExport?: (payload: { json: string }) => Promise<{ success: boolean; filePath?: string }>;
-  aiSessionsBackupImport?: () => Promise<{ success: boolean; json?: string }>;
+  aiSessionsBackupImport?: () => Promise<{ success: boolean; json?: string; canceled?: boolean }>;
 }
 
 /**
@@ -117,6 +118,52 @@ export function mergeImportedSessions(current: AISession[], imported: AISession[
     }
   }
   return Array.from(byId.values()).sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+}
+
+export type AiSessionsImportMode = 'merge' | 'replace';
+export type AiSessionsImportResult = Record<'added' | 'merged' | 'replaced' | 'skipped', number>;
+
+/** Explicit file imports keep local turns and bindings unless replacement was selected. */
+export function planAiSessionsImport(
+  current: AISession[],
+  imported: AISession[],
+  mode: AiSessionsImportMode,
+  shouldSkip: (id: string) => boolean,
+) {
+  const byId = new Map(current.map(session => [session.id, session]));
+  const changes = new Map<string, Exclude<keyof AiSessionsImportResult, 'skipped'>>();
+  const resetNativeSessions: string[] = [];
+  const uniqueImported = mergeImportedSessions([], imported);
+  for (const entry of uniqueImported) {
+    if (shouldSkip(entry.id)) continue;
+    const previous = byId.get(entry.id);
+    if (!previous) {
+      byId.set(entry.id, entry);
+      changes.set(entry.id, 'added');
+      continue;
+    }
+    if (mode === 'merge' && entry.agentId !== previous.agentId) continue;
+    const candidate = mode === 'replace' ? entry : {
+      ...mergeAiSessionLists([previous], [{ ...entry, historyReset: previous.historyReset }])[0],
+      scope: previous.scope,
+      scopeDangling: previous.scopeDangling,
+      scopeOrigin: previous.scopeOrigin,
+    };
+    const transcriptChanged = previous.agentId !== candidate.agentId || !aiSessionTranscriptsEqual(previous, candidate);
+    const reset = mode === 'replace' && transcriptChanged
+      ? { at: Math.max(Date.now(), (previous.historyReset?.at ?? 0) + 1, (entry.historyReset?.at ?? 0) + 1), id: crypto.randomUUID() }
+      : previous.historyReset;
+    const next = {
+      ...candidate,
+      historyReset: reset,
+      externalSessionId: transcriptChanged ? undefined : previous.externalSessionId,
+    };
+    if (JSON.stringify(previous) === JSON.stringify(next)) continue;
+    byId.set(entry.id, next);
+    changes.set(entry.id, mode === 'replace' ? 'replaced' : 'merged');
+    if (transcriptChanged) resetNativeSessions.push(entry.id);
+  }
+  return { sessions: [...byId.values()], changes, resetNativeSessions, importCount: uniqueImported.length };
 }
 
 export type BackupMirrorInput = string | (() => string);

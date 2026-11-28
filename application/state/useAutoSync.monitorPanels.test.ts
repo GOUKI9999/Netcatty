@@ -5,6 +5,8 @@ import React from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import type { MonitorPanel } from "../../domain/monitorPanels";
 import type { CloudProvider, SyncResult, SyncPayload } from "../../domain/sync";
+import { STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS } from "../../infrastructure/config/storageKeys";
+import { installFakeIndexedDb } from "./testSupport/fakeIndexedDb";
 
 installBrowserLockFixture();
 
@@ -55,6 +57,73 @@ const { getCloudSyncManager } =
   await import("../../infrastructure/services/CloudSyncManager");
 const { saveMonitorPanel, deleteMonitorPanel, writeMonitorPanels } =
   await import("./monitorPanelsStorage");
+const aiSessions = await import("./aiStateSnapshots");
+
+test("a committed local chat change triggers auto-sync and cloud apply does not", async () => {
+  const manager = getCloudSyncManager();
+  const state = manager.getState();
+  const snapshot = {
+    ...state, securityState: "UNLOCKED" as const, syncState: "IDLE" as const, autoSyncEnabled: true,
+    providers: { ...state.providers, webdav: { provider: "webdav" as const, status: "connected" as const } },
+  };
+  const uploads: SyncPayload[] = [];
+  const mocks = {
+    getState: () => snapshot,
+    loadSyncBase: async () => null,
+    inspectProviderRemote: async () => ({ remoteFile: null, payload: null, remoteChanged: false }),
+    syncAllProviders: async (payload: SyncPayload) => {
+      uploads.push(structuredClone(payload));
+      return new Map<CloudProvider, SyncResult>([["webdav", { provider: "webdav", success: true, action: "upload" }]]);
+    },
+    setPendingLocalSync: () => {},
+    setAvailablePluginSyncProviders: () => {},
+  };
+  const originals = Object.fromEntries(Object.keys(mocks).map(key => [key, manager[key as keyof typeof mocks]]));
+  Object.assign(manager, mocks);
+  const idb = installFakeIndexedDb();
+  const previousPreference = storage.getItem(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS);
+  storage.setItem(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS, JSON.stringify({ enabled: true }));
+  aiSessions.__resetIdbPersistenceForTests();
+  const chat = { id: "chat", title: "Original", agentId: "catty", scope: { type: "global" as const },
+    createdAt: 1, updatedAt: 1, messages: [] };
+  const save = async (title: string, fromSync: boolean) => {
+    const next = [{ ...chat, title }];
+    aiSessions.setLatestAISessionsSnapshot(next);
+    aiSessions.writeSessionsForStorage(next, { fromSync });
+    await aiSessions.__flushIdbWritesForTests();
+  };
+  const apply = async () => {};
+  const config = { hosts: [], keys: [], snippets: [], customGroups: ["fixture"], startupReady: true,
+    onApplyPayload: apply, onApplyConvergentPayload: apply };
+  let renderer: ReactTestRenderer | undefined;
+  let api: ReturnType<typeof useAutoSync>;
+  const Probe = () => { api = useAutoSync(config); return null; };
+  const wait = (ms: number) => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)); });
+  try {
+    await save("Original", true);
+    await act(async () => { renderer = create(React.createElement(Probe)); });
+    await wait(100);
+    await act(async () => { assert.equal(await api.syncNow({ trigger: "manual" }), true); });
+    await wait(3_500);
+    assert.equal(uploads.length, 1);
+    await act(async () => { await save("Cloud rename", true); });
+    await wait(3_500);
+    assert.equal(uploads.length, 1);
+    await act(async () => { await save("Local rename", false); });
+    await wait(3_500);
+    assert.equal(uploads.length, 2);
+    assert.equal(uploads[1].aiSessions?.[0].title, "Local rename");
+  } finally {
+    await act(async () => { renderer?.unmount(); });
+    Object.assign(manager, originals);
+    aiSessions.setLatestAISessionsSnapshot([]);
+    aiSessions.__resetIdbPersistenceForTests();
+    aiSessions.__resetBackupMirrorForTests();
+    idb.restore();
+    if (previousPreference === null) storage.removeItem(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS);
+    else storage.setItem(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS, previousPreference);
+  }
+});
 
 test("normal manual and debounced auto-sync upload panel creation, edits and deletion", async () => {
   const manager = getCloudSyncManager();

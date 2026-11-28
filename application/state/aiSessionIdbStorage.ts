@@ -33,6 +33,7 @@ export const AI_SESSIONS_META_MIGRATION_KEY = 'migrationCompleted';
 
 /** Cross-window change notification (replaces the localStorage `storage` event for sessions). */
 const AI_SESSIONS_IDB_CHANGE_CHANNEL = 'netcatty_ai_sessions_changed';
+const AI_SESSIONS_LOCAL_CHANGE = 'netcatty:ai-sessions-local-change';
 
 export function isIndexedDbAvailable(): boolean {
   return typeof indexedDB !== 'undefined' && indexedDB !== null;
@@ -167,11 +168,18 @@ function getChangeChannel(): BroadcastChannel | null {
 }
 
 /** Announce a session-store change to OTHER windows (never the sender). */
-export function publishAiSessionsIdbChange(): void {
+export function publishAiSessionsIdbChange(localEdit = false): void {
   try {
-    getChangeChannel()?.postMessage(Date.now());
+    getChangeChannel()?.postMessage({ localEdit });
   } catch {
     // Notification is best-effort; the write itself already succeeded.
+  }
+  if (localEdit && typeof window !== 'undefined') {
+    try {
+      window.dispatchEvent?.(new (window.Event ?? Event)(AI_SESSIONS_LOCAL_CHANGE));
+    } catch {
+      // A notification failure does not roll back the persisted record.
+    }
   }
 }
 
@@ -181,6 +189,19 @@ export function subscribeAiSessionsIdbChange(listener: () => void): () => void {
   const handler = () => listener();
   channel.addEventListener('message', handler);
   return () => channel.removeEventListener('message', handler);
+}
+
+export function subscribeLocalAiSessionChanges(listener: () => void): () => void {
+  const channel = getChangeChannel();
+  const onPeerChange = (event: MessageEvent) => {
+    if (event.data?.localEdit === true) listener();
+  };
+  channel?.addEventListener('message', onPeerChange);
+  window.addEventListener(AI_SESSIONS_LOCAL_CHANGE, listener);
+  return () => {
+    channel?.removeEventListener('message', onPeerChange);
+    window.removeEventListener(AI_SESSIONS_LOCAL_CHANGE, listener);
+  };
 }
 
 // ── Boot load + one-release legacy migration ──

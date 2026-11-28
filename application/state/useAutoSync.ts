@@ -37,7 +37,9 @@ import {
   sanitizeHostsForSync,
   sanitizePortForwardingRulesForSync,
   shouldPromptCloudVaultRecovery,
+  type AiSessionSyncBaseline,
 } from '../syncPayload';
+import { subscribeLocalAiSessionChanges } from './aiSessionIdbStorage';
 import { commitPluginSidecarsAfterSuccessfulSync } from '../pluginSyncSidecarBridge';
 import { readInterruptedVaultApply } from '../localVaultBackups';
 import {
@@ -91,10 +93,11 @@ interface AutoSyncConfig {
   startupReady?: boolean;
 
   // Callbacks
-  onApplyPayload: (payload: SyncPayload) => void | Promise<void>;
+  onApplyPayload: (payload: SyncPayload, aiSessionBaseline?: AiSessionSyncBaseline) => void | Promise<void>;
   onApplyConvergentPayload: (
     payload: SyncPayload,
     commitReplica: () => Promise<void>,
+    aiSessionBaseline?: AiSessionSyncBaseline,
   ) => Promise<void>;
 }
 
@@ -278,7 +281,9 @@ export const useAutoSync = (config: AutoSyncConfig) => {
 
     window.addEventListener('storage', handleStorage);
     window.addEventListener(LOCAL_STORAGE_ADAPTER_CHANGED_EVENT, handleLocalStorageAdapterChanged);
+    const unsubscribeAiSessions = subscribeLocalAiSessionChanges(() => bumpIfSyncableSetting(STORAGE_KEY_AI_SESSIONS));
     return () => {
+      unsubscribeAiSessions();
       window.removeEventListener('storage', handleStorage);
       window.removeEventListener(LOCAL_STORAGE_ADAPTER_CHANGED_EVENT, handleLocalStorageAdapterChanged);
     };
@@ -480,7 +485,8 @@ export const useAutoSync = (config: AutoSyncConfig) => {
           ...(options?.conflictActionOverride
             ? { conflictActionOverride: options.conflictActionOverride }
             : {}),
-          applyConvergentPayload: onApplyConvergentPayload,
+          applyConvergentPayload: (result, commitReplica) =>
+            onApplyConvergentPayload(result, commitReplica, payload.aiSessions ?? []),
         },
       );
 
@@ -493,7 +499,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       for (const result of resultList) {
         if (result.mergedPayload && !result.mergedPayloadApplied) {
           const portableMerged = stripSyncPayloadEncryptedCredentials(result.mergedPayload);
-          await Promise.resolve(onApplyPayload(portableMerged));
+          await Promise.resolve(onApplyPayload(portableMerged, payload.aiSessions ?? []));
           if (result.remoteFile) {
             await sync.commitRemoteInspection(result.provider, result.remoteFile, portableMerged, {
               recordDownload: true,
@@ -788,7 +794,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
           // between commit and apply would leave the anchor pointing at
           // remote while local is still empty — the exact overwrite window
           // we're trying to close.
-          await Promise.resolve(onApplyPayloadRef.current(remotePayload));
+          await Promise.resolve(onApplyPayloadRef.current(remotePayload, localPayload.aiSessions ?? []));
           await manager.commitRemoteInspection(connectedProvider, remoteFile, remotePayload, {
             recordDownload: true,
           });
@@ -816,7 +822,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
         // Apply remote FIRST; only commit anchor/base after the UI-side
         // state has accepted the remote payload, matching the empty-vault
         // restore ordering above.
-        await Promise.resolve(onApplyPayloadRef.current(remotePayload));
+        await Promise.resolve(onApplyPayloadRef.current(remotePayload, localPayload.aiSessions ?? []));
         await manager.commitRemoteInspection(connectedProvider, remoteFile, remotePayload, {
           recordDownload: true,
         });
@@ -884,7 +890,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       // Apply merged payload to local state BEFORE committing. If the apply
       // throws, the next startup will re-run the merge with fresh data.
       const portableMerge = stripSyncPayloadEncryptedCredentials(mergeResult.payload);
-      await Promise.resolve(onApplyPayloadRef.current(portableMerge));
+      await Promise.resolve(onApplyPayloadRef.current(portableMerge, localPayload.aiSessions ?? []));
       // Base is the last-agreed remote snapshot; store the portable remote
       // view so future diffs never treat device-bound enc:v1 as cloud truth.
       await manager.commitRemoteInspection(connectedProvider, remoteFile, remotePayload);

@@ -215,6 +215,8 @@ export interface ChatMessage {
   agentActivities?: AgentActivity[];
   usage?: AgentUsage;
   timestamp: number;
+  /** Revision of this message's content, independent of session edits. */
+  updatedAt?: number;
   model?: string;
   providerId?: AIProviderId;
   /** Catty stopped at its tool-loop cap; rendered as a non-error notice. */
@@ -254,8 +256,13 @@ export interface ToolResult {
 export interface AISession {
   id: string;
   title: string;
+  titleUpdatedAt?: number;
   agentId: string;
   scope: AISessionScope;
+  /** Historical name captured when the conversation was created. */
+  scopeLabel?: string;
+  /** Portable scope from before a device-local move. */
+  scopeOrigin?: Pick<AISessionScope, 'type' | 'hostIds'>;
   /**
    * The scope target (terminal/workspace) this chat is bound to no longer
    * exists. The record and its active pointer stay intact so `/chats` can
@@ -264,6 +271,8 @@ export interface AISession {
    */
   scopeDangling?: boolean;
   messages: ChatMessage[];
+  /** Explicit backup replacement starts a new transcript generation. */
+  historyReset?: { at: number; id: string };
   contextCompaction?: AISessionContextCompaction;
   externalSessionId?: string;
   createdAt: number;

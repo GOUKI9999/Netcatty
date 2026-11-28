@@ -5,6 +5,8 @@ import { useI18n } from '../application/i18n/I18nProvider';
 import { cn } from '../lib/utils';
 import { MAX_SEARCH_QUERY_LENGTH, truncateQueryForMatch } from '../domain/searchMatcher';
 import { Dropdown, DropdownContent, DropdownTrigger } from './ui/dropdown';
+import { ConfirmDialog } from './ui/confirm-dialog';
+import type { AiSessionsImportMode } from '../application/state/aiSessionsBackup';
 import { Input } from './ui/input';
 import { ScrollArea } from './ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
@@ -24,8 +26,7 @@ interface SessionHistoryDrawerProps {
   onRename?: (sessionId: string, title: string) => void;
   /** Manual durability escape hatch: export the whole store to a JSON file. */
   onExportSessions?: () => void;
-  /** Import sessions from a JSON export; merges by id, newer wins. */
-  onImportSessions?: () => void;
+  onImportSessions?: (mode?: AiSessionsImportMode) => void;
   /**
    * Global AI session manager slot (issue #4098 phases 4-5). When provided,
    * the drawer offers a scoped ⇄ global toggle and renders this node in
@@ -52,6 +53,7 @@ export const SessionHistoryDrawer: React.FC<SessionHistoryDrawerProps> = ({
   const { t } = useI18n();
   const [view, setView] = useState<'scoped' | 'global'>('scoped');
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  const [confirmReplacement, setConfirmReplacement] = useState(false);
   const [renderCount, setRenderCount] = useState(SESSION_RENDER_BATCH);
   const [searchQuery, setSearchQuery] = useState('');
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
@@ -145,18 +147,32 @@ export const SessionHistoryDrawer: React.FC<SessionHistoryDrawerProps> = ({
               </DropdownTrigger>
               <DropdownContent align="end" className="min-w-[152px] p-1" keyboardNavigation>
                 {onImportSessions && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setHeaderMenuOpen(false);
-                      onImportSessions();
-                    }}
-                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-foreground/85 hover:bg-muted cursor-pointer"
-                  >
-                    <Upload size={12} className="shrink-0 text-muted-foreground" />
-                    <span>{t('ai.chat.importSessions')}</span>
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setHeaderMenuOpen(false);
+                        onImportSessions();
+                      }}
+                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-foreground/85 hover:bg-muted cursor-pointer"
+                    >
+                      <Upload size={12} className="shrink-0 text-muted-foreground" />
+                      <span>{t('ai.chat.importSessions')}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setHeaderMenuOpen(false);
+                        setConfirmReplacement(true);
+                      }}
+                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-foreground/85 hover:bg-muted cursor-pointer"
+                    >
+                      <Upload size={12} className="shrink-0 text-muted-foreground" />
+                      <span>{t('ai.chat.replaceFromBackup')}</span>
+                    </button>
+                  </>
                 )}
                 {onExportSessions && (
                   <button
@@ -183,6 +199,18 @@ export const SessionHistoryDrawer: React.FC<SessionHistoryDrawerProps> = ({
           </button>
         </div>
       </div>
+      <ConfirmDialog
+        open={confirmReplacement}
+        title={t('ai.chat.replaceFromBackup')}
+        message={t('ai.chat.replaceFromBackupMessage')}
+        confirmLabel={t('ai.chat.replaceFromBackup')}
+        onOpenChange={setConfirmReplacement}
+        onConfirm={() => {
+          setConfirmReplacement(false);
+          onImportSessions?.('replace');
+        }}
+        destructive
+      />
       {view === 'global' && globalManager ? (
         globalManager
       ) : (

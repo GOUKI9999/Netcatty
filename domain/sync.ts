@@ -294,8 +294,8 @@ export interface SyncPayload {
    * AI chat sessions (optional).
    *
    * Opt-in: only present when the user enabled `cloudSync.aiSessions`.
-   * Messages are merged append-only (never dropped), and attachment payloads
-   * are stripped — only their metadata travels.
+   * Messages merge within the same transcript generation. An explicit backup
+   * replacement starts a new generation. Only attachment metadata travels.
    */
   aiSessions?: import('../infrastructure/ai/types').AISession[];
   browserBookmarks?: import('./browserBookmark').BrowserBookmark[];

@@ -36,7 +36,7 @@ export interface AIChatSidePanelProps {
   clearDraftForScope: (scopeKey: string) => void;
   addDraftFiles: (scopeKey: string, fallbackAgentId: string, inputFiles: File[]) => Promise<void>;
   removeDraftFile: (scopeKey: string, fallbackAgentId: string, fileId: string) => void;
-  createSession: (scope: AISessionScope, agentId?: string) => AISession;
+  createSession: (scope: AISessionScope, agentId?: string, scopeLabel?: string) => AISession;
   /** Non-destructively branch before the last user turn; returns the branch id + restored composer content. */
   undoLastTurnInSession?: (
     sessionId: string,
@@ -49,7 +49,9 @@ export interface AIChatSidePanelProps {
   /** Manual durability escape hatch: export the store to a JSON file (returns the path, '' when fixed-path). With `sessionIds`, exports only those chats. */
   exportSessionsBackup?: (sessionIds?: readonly string[]) => Promise<string | null>;
   /** Import sessions from a JSON export; merges by id. Returns the imported count. */
-  importSessionsBackup?: () => Promise<number>;
+  importSessionsBackup?: (
+    mode?: import('../application/state/aiSessionsBackup').AiSessionsImportMode,
+  ) => Promise<import('../application/state/aiSessionsBackup').AiSessionsImportResult | null>;
   updateSessionExternalSessionId: (sessionId: string, externalSessionId: string | undefined) => void;
   addMessageToSession: (sessionId: string, message: ChatMessage) => void;
   updateLastMessage: (

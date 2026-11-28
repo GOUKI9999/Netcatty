@@ -6,11 +6,13 @@ import {
   DebouncedBackupMirror,
   isMissingOrCorruptSessionsStore,
   mergeImportedSessions,
+  planAiSessionsImport,
   parseBackupSessions,
   readLiveSessionsArray,
   shouldRestoreFromBackup,
 } from './aiSessionsBackup';
 import { prepareRestoredSessions, pruneSessionsForStorage } from './aiStateSnapshots';
+import { mergeAiSessionLists } from '../../domain/syncMerge';
 
 function makeSession(id: string, updatedAt = 1_000): AISession {
   return {
@@ -23,6 +25,31 @@ function makeSession(id: string, updatedAt = 1_000): AISession {
     updatedAt,
   } as never;
 }
+
+test('JSON import combines different turns while keeping the local scope and reporting actual changes', () => {
+  const chat = { ...makeSession('chat'), externalSessionId: 'local-thread',
+    messages: [{ id: 'local', role: 'user' as const, timestamp: 1, content: 'Local turn' }] };
+  const imported = { ...makeSession('chat', 2_000), scope: { type: 'terminal' as const, targetId: 'elsewhere' },
+    messages: [{ id: 'archive', role: 'user' as const, timestamp: 2, content: 'Backup turn' }] };
+  const older = { ...chat, updatedAt: chat.updatedAt - 1 };
+  assert.equal(planAiSessionsImport([chat], [older], 'merge', () => false).changes.size, 0);
+  const plan = planAiSessionsImport([chat], [imported, makeSession('new'), makeSession('busy')], 'merge', id => id === 'busy');
+  assert.deepEqual([...plan.changes].sort(), [['chat', 'merged'], ['new', 'added']]);
+  assert.equal(plan.importCount, 3);
+  assert.deepEqual(plan.sessions[0].messages.map(message => message.id), ['local', 'archive']);
+  assert.deepEqual(plan.sessions[0].scope, chat.scope);
+  assert.deepEqual(plan.resetNativeSessions, ['chat']);
+  assert.equal(plan.sessions[0].externalSessionId, undefined);
+});
+
+test('explicit replacement syncs the archive transcript even against a newer old-generation copy', () => {
+  const archive = makeSession('chat', 100);
+  const live = { ...makeSession('chat', 200), messages: [{ id: 'after', role: 'user' as const, timestamp: 200, content: 'Later' }] };
+  const plan = planAiSessionsImport([live], [archive], 'replace', () => false);
+  assert.deepEqual([...plan.changes], [['chat', 'replaced']]);
+  assert.ok(plan.sessions[0].historyReset?.id);
+  assert.deepEqual(mergeAiSessionLists<AISession>([live], plan.sessions)[0].messages, []);
+});
 
 test('isMissingOrCorruptSessionsStore distinguishes missing or corrupt stores from valid arrays', () => {
   assert.equal(isMissingOrCorruptSessionsStore(null), true);

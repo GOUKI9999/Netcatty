@@ -206,6 +206,36 @@ test("ai sessions: completed messages replace their streamed copy on the newer s
   }
 });
 
+test('chat rename and same-message completion merge independently with mixed-version replicas', () => {
+  const partial = session('chat', 100, [{ ...msg('reply', 1), content: 'Partial' }]);
+  const complete = { ...partial, updatedAt: 200, messages: [{ ...partial.messages[0], content: 'Complete reply' }] };
+  const renamed = { ...partial, title: 'Renamed', titleUpdatedAt: 300, updatedAt: 300 };
+  const merged = mergeSyncPayloads(payload({ aiSessions: [partial] }), payload({ aiSessions: [renamed] }),
+    payload({ aiSessions: [complete] })).payload.aiSessions![0];
+  assert.equal(merged.title, 'Renamed');
+  assert.equal(merged.messages[0].content, 'Complete reply');
+
+  const legacyComplete = { ...complete, messages: [{ ...partial.messages[0], content: 'Partial becomes complete' }] };
+  const [withoutBase] = mergeAiSessionLists([renamed], [legacyComplete]);
+  assert.equal(withoutBase.messages[0].content, 'Partial becomes complete');
+  const versioned = { ...complete, updatedAt: 900, messages: [{ ...partial.messages[0], content: 'Complete', updatedAt: 250 }] };
+  const versionedPartial = { ...renamed, updatedAt: 1000, messages: [{ ...partial.messages[0], updatedAt: 110 }] };
+  assert.equal(mergeAiSessionLists([versionedPartial], [versioned])[0].messages[0].content, 'Complete');
+  assert.equal(mergeAiSessionLists([versionedPartial], [versioned])[0].title, 'Renamed');
+});
+
+test('an explicit backup replacement does not re-import turns from the older generation', () => {
+  const old = session('chat', 800, [msg('before-backup', 1), msg('after-backup', 2)]);
+  const restored = { ...session('chat', 100, [msg('before-backup', 1)]), historyReset: { at: 900, id: 'restore' } };
+  for (const [a, b] of [[old, restored], [restored, old]]) {
+    const [merged] = mergeAiSessionLists([a], [b]);
+    assert.deepEqual(merged.messages, restored.messages);
+    assert.deepEqual(merged.historyReset, restored.historyReset);
+  }
+  const continued = { ...restored, messages: [...restored.messages, msg('after-restore', 3)] };
+  assert.deepEqual(mergeAiSessionLists([restored], [continued])[0].messages, continued.messages);
+});
+
 test("ai sessions: a new turn survives deletion on the other device", () => {
   const initial = session("s1", 100, [msg("m1", 1)]);
   const edited = session("s1", 200, [msg("m1", 1), msg("m2", 2)]);

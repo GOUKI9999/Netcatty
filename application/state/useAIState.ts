@@ -35,6 +35,7 @@ import { convertFilesToUploads } from './useFileUpload';
 import { removeProviderReferences } from './aiProviderCleanup';
 import { publishAISessionsSnapshot } from './aiSessionsStore';
 import { planSessionFork } from '../../domain/aiSessionFork';
+import { getAiSessionScopeOrigin } from '../../domain/syncMerge';
 import {
   AI_STATE_CHANGED_DRAFTS_BY_SCOPE,
   AI_STATE_CHANGED_PANEL_VIEW_BY_SCOPE,
@@ -42,6 +43,7 @@ import {
   bumpDraftUploadGeneration,
   cleanupDeletedAIChatSessions,
   cleanupOrphanedAISessions,
+  cleanupSdkAgentSessions,
   flushBackupMirror,
   getAIBridge,
   getDraftUploadGeneration,
@@ -84,6 +86,9 @@ import {
 import {
   isMissingOrCorruptSessionsStore,
   mergeImportedSessions,
+  planAiSessionsImport,
+  type AiSessionsImportMode,
+  type AiSessionsImportResult,
   parseBackupSessions,
   readLiveSessionsArray,
 } from './aiSessionsBackup';
@@ -712,7 +717,10 @@ export function useAIState() {
     const fork: AISession = {
       id: `ai_${now}_${Math.random().toString(36).slice(2, 8)}`,
       title: plan.title,
+      titleUpdatedAt: now,
       agentId: source.agentId,
+      scopeLabel: source.scopeLabel,
+      scopeOrigin: getAiSessionScopeOrigin(source),
       scope: {
         ...source.scope,
         // Host membership stays with the source (the messages were produced
@@ -739,13 +747,15 @@ export function useAIState() {
     return fork;
   }, [persistSessions, setActiveSessionId]);
 
-  const createSession = useCallback((scope: AISessionScope, agentId?: string): AISession => {
+  const createSession = useCallback((scope: AISessionScope, agentId?: string, scopeLabel?: string): AISession => {
     const now = Date.now();
     const session: AISession = {
       id: `ai_${now}_${Math.random().toString(36).slice(2, 8)}`,
       title: 'New Chat',
+      titleUpdatedAt: now,
       agentId: agentId || defaultAgentId,
       scope,
+      ...(scopeLabel ? { scopeLabel } : {}),
       messages: [],
       createdAt: now,
       updatedAt: now,
@@ -866,7 +876,12 @@ export function useAIState() {
 
   const updateSessionTitle = useCallback((sessionId: string, title: string) => {
     setSessionsRaw(prev => {
-      const next = prev.map(s => s.id === sessionId ? { ...s, title, updatedAt: Date.now() } : s);
+      const session = prev.find(s => s.id === sessionId);
+      if (!session || session.title === title) return prev;
+      const now = Date.now();
+      const next = prev.map(s => s.id === sessionId
+        ? { ...s, title, titleUpdatedAt: Math.max(now, (s.titleUpdatedAt ?? 0) + 1), updatedAt: now }
+        : s);
       setLatestAISessionsSnapshot(next);
       persistSessions(next);
       return next;
@@ -906,7 +921,7 @@ export function useAIState() {
         return {
           ...rest,
           scope: nextScope,
-          updatedAt: Date.now(),
+          scopeOrigin: getAiSessionScopeOrigin(s),
         } as AISession;
       });
       setLatestAISessionsSnapshot(next);
@@ -966,19 +981,37 @@ export function useAIState() {
     return result?.success ? (result.filePath ?? '') : null;
   }, []);
 
-  const importSessionsBackup = useCallback(async (): Promise<number> => {
+  const importSessionsBackup = useCallback(async (
+    mode: AiSessionsImportMode = 'merge',
+  ): Promise<AiSessionsImportResult | null> => {
     const bridge = getAIBridge();
-    if (!bridge?.aiSessionsBackupImport) return 0;
+    const counts: AiSessionsImportResult = { added: 0, merged: 0, replaced: 0, skipped: 0 };
+    if (!bridge?.aiSessionsBackupImport) return counts;
     const result = await bridge.aiSessionsBackupImport();
-    if (!result?.success || !result.json) return 0;
+    if (result?.canceled) return null;
+    if (!result?.success || !result.json) return counts;
     const imported = parseBackupSessions(result.json);
-    if (!imported || imported.length === 0) return 0;
-    // Merge synchronously against the live ref so orphan cleanup sees the
-    // imported chats even if React would defer a setState updater.
-    const syncEnabled = !!localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled;
-    const next = prepareRestoredSessions(mergeImportedSessions(sessionsRef.current, imported), syncEnabled);
-    if (!writeSessionsForStorage(next)) return 0;
+    if (!imported || imported.length === 0) return counts;
+    const { isAIChatSessionStreaming, stopAIChatSessionBeforeReplacement } = await import('./useAIChatStreaming');
     const importedIds = new Set(imported.map(session => session.id));
+    if (mode === 'replace') {
+      const before = latestAISessionsSnapshot ?? sessionsRef.current;
+      if (before.some(session => importedIds.has(session.id))) {
+        const backup = await bridge.aiSessionsBackupWrite?.({ json: JSON.stringify(before) });
+        if (!backup?.ok) throw new Error('Unable to save AI chats before replacing them');
+        await Promise.all(before.filter(session => importedIds.has(session.id))
+          .map(session => stopAIChatSessionBeforeReplacement(session.id)));
+      }
+    }
+    const plan = planAiSessionsImport(
+      latestAISessionsSnapshot ?? sessionsRef.current, imported, mode, isAIChatSessionStreaming,
+    );
+    counts.skipped = plan.importCount;
+    if (plan.changes.size === 0) return counts;
+    const syncEnabled = !!localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled;
+    const next = prepareRestoredSessions(plan.sessions, syncEnabled);
+    if (!writeSessionsForStorage(next)) throw new Error('Unable to save imported AI chats');
+    const cleanup = cleanupSdkAgentSessions(plan.resetNativeSessions);
     sessionsRef.current = next;
     setLatestAISessionsSnapshot(next);
     setSessionsRaw(next);
@@ -998,14 +1031,22 @@ export function useAIState() {
         ?? localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP)
         ?? {},
     );
-    return nextSessions.filter(session => importedIds.has(session.id)).length;
+    for (const session of nextSessions) {
+      const change = plan.changes.get(session.id);
+      if (change) {
+        counts[change]++;
+        counts.skipped--;
+      }
+    }
+    await cleanup;
+    return counts;
   }, []);
 
   const updateSessionExternalSessionId = useCallback((sessionId: string, externalSessionId: string | undefined) => {
     setSessionsRaw(prev => {
       const next = prev.map(s => (
-        s.id === sessionId
-          ? { ...s, externalSessionId, updatedAt: Date.now() }
+        s.id === sessionId && s.externalSessionId !== externalSessionId
+          ? { ...s, externalSessionId }
           : s
       ));
       setLatestAISessionsSnapshot(next);
@@ -1049,8 +1090,12 @@ export function useAIState() {
       const next = prev.map(s => {
         if (s.id !== sessionId || s.messages.length === 0) return s;
         const msgs = [...s.messages];
-        msgs[msgs.length - 1] = updater(msgs[msgs.length - 1]);
-        return { ...s, messages: msgs, updatedAt: Date.now() };
+        const previous = msgs[msgs.length - 1];
+        const updated = updater(previous);
+        if (updated === previous) return s;
+        const now = Date.now();
+        msgs[msgs.length - 1] = { ...updated, updatedAt: Math.max(now, (previous.updatedAt ?? 0) + 1) };
+        return { ...s, messages: msgs, updatedAt: now };
       });
       setLatestAISessionsSnapshot(next);
       debouncedPersistSessions();
@@ -1065,8 +1110,12 @@ export function useAIState() {
         const idx = s.messages.findIndex(m => m.id === messageId);
         if (idx === -1) return s;
         const msgs = [...s.messages];
-        msgs[idx] = updater(msgs[idx]);
-        return { ...s, messages: msgs, updatedAt: Date.now() };
+        const previous = msgs[idx];
+        const updated = updater(previous);
+        if (updated === previous) return s;
+        const now = Date.now();
+        msgs[idx] = { ...updated, updatedAt: Math.max(now, (previous.updatedAt ?? 0) + 1) };
+        return { ...s, messages: msgs, updatedAt: now };
       });
       setLatestAISessionsSnapshot(next);
       debouncedPersistSessions();

@@ -147,7 +147,7 @@ import {
   STORAGE_KEY_AI_SESSIONS,
   STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS,
 } from '../infrastructure/config/storageKeys';
-import { mergeAiSessionLists, mergeSyncPayloads, stripAiSessionDeviceState, stripAiSessionPayloadForSync } from '../domain/syncMerge';
+import { aiSessionTranscriptsEqual, mergeAiSessionLists, mergeSyncPayloads, stripAiSessionDeviceState, stripAiSessionPayloadForSync } from '../domain/syncMerge';
 import { isTerminalSidePanelAutoOpenTab } from '../domain/terminalSidePanelAutoOpen';
 import { normalizeAiToolOutputMaxChars } from '../domain/aiToolOutputLimit';
 import { isSftpTreeFolderDoubleClickBehavior } from '../domain/sftpTreeFolderDoubleClick';
@@ -1096,17 +1096,9 @@ function pruneOrphanPerAgentBindings(): void {
 export function collectAiSessionsForSync(): SyncPayload['aiSessions'] {
   const enabled = localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS);
   if (enabled?.enabled !== true) return undefined;
-  // Issue #4125 review P1①: never collect before the boot hydration has
-  // settled. A pre-hydration collect falls back to the stale legacy
-  // localStorage store and the writeSessionsForStorage() call below would
-  // overwrite newer IndexedDB records with pre-migration data. Skip this
-  // sync round; the next auto-sync picks up the hydrated store.
+  // The legacy localStorage fallback may still be stale during IDB hydration.
   if (!isAiSessionsHydrationComplete()) return undefined;
-  const sessions = collectLocalAiSessions();
-  if (!writeSessionsForStorage(sessions)) {
-    throw new Error('Unable to persist chat history for cloud sync');
-  }
-  return stripAiSessionPayloadForSync(sessions);
+  return stripAiSessionPayloadForSync(collectLocalAiSessions());
 }
 
 function collectLocalAiSessions(): NonNullable<SyncPayload['aiSessions']> {
@@ -1310,22 +1302,45 @@ export async function buildLocalVaultPayloadAsync(
   return base;
 }
 
+export type AiSessionSyncBaseline = Readonly<NonNullable<SyncPayload['aiSessions']>>;
+
 /** Merge downloaded chat data through the existing state and persistence boundary. */
-async function applyAiSessionData(sessions: NonNullable<SyncPayload['aiSessions']>, includeLocalOnlyData: boolean): Promise<void> {
+async function applyAiSessionData(
+  sessions: NonNullable<SyncPayload['aiSessions']>,
+  includeLocalOnlyData: boolean,
+  baseline: AiSessionSyncBaseline = [],
+): Promise<void> {
   const { isAIChatSessionStreaming, stopAIChatSessionBeforeReplacement } = await import('./state/useAIChatStreaming');
   const preserveActive = (id: string) => !includeLocalOnlyData && isAIChatSessionStreaming(id);
   const incoming = includeLocalOnlyData
     ? sessions
     : sessions.map(stripAiSessionDeviceState);
   const incomingIds = new Set(incoming.map((session) => session.id));
-  const incomingById = new Map(incoming.map((session) => [session.id, session]));
-  const portableMessages = (value: typeof incoming[number]) => stripAiSessionPayloadForSync([value])[0].messages;
-  const affectedIds = collectLocalAiSessions().filter((local) => {
+  const baselineById = new Map(baseline.map(session => [session.id, session]));
+  const portableSession = (session: typeof incoming[number]) =>
+    JSON.stringify(stripAiSessionPayloadForSync([session])[0]);
+
+  const resolveCandidates = (current: typeof incoming) => {
+    if (includeLocalOnlyData) return incoming;
+    const currentIds = new Set(current.map(session => session.id));
+    return mergeAiSessionLists(
+      current.filter(session => {
+        if (incomingIds.has(session.id) || preserveActive(session.id)) return true;
+        const atStart = baselineById.get(session.id);
+        return !atStart || portableSession(atStart) !== portableSession(session);
+      }),
+      incoming.filter(session => !baselineById.has(session.id) || currentIds.has(session.id)),
+      baseline,
+    );
+  };
+
+  const initialLocal = collectLocalAiSessions();
+  const initialCandidates = resolveCandidates(initialLocal);
+  const candidateById = new Map(initialCandidates.map(session => [session.id, session]));
+  const affectedIds = initialLocal.filter((local) => {
     if (preserveActive(local.id)) return false;
-    const next = incomingById.get(local.id);
-    if (!next) return true;
-    const candidate = includeLocalOnlyData ? next : mergeAiSessionLists([local], [next])[0];
-    return JSON.stringify(portableMessages(local)) !== JSON.stringify(portableMessages(candidate));
+    const candidate = candidateById.get(local.id);
+    return !candidate || !aiSessionTranscriptsEqual(local, candidate);
   }).map((session) => session.id);
   if (affectedIds.length > 0) {
     await Promise.all(affectedIds.map(stopAIChatSessionBeforeReplacement));
@@ -1334,12 +1349,8 @@ async function applyAiSessionData(sessions: NonNullable<SyncPayload['aiSessions'
   // merging so the stopped turn cannot write into a replaced/deleted session.
   const localSessions = collectLocalAiSessions();
   const localById = new Map(localSessions.map((session) => [session.id, session]));
-  const removedIds = localSessions.filter((session) => !incomingIds.has(session.id) && !preserveActive(session.id)).map((session) => session.id);
   const resetSdkSessions: string[] = [];
-  // The sync merge has already decided which session IDs survive. Backups
-  // restore their exact transcript; cloud survivors still retain local turns.
-  const candidates = includeLocalOnlyData ? incoming
-    : mergeAiSessionLists(localSessions.filter((session) => incomingIds.has(session.id)), incoming);
+  const candidates = localSessions === initialLocal ? initialCandidates : resolveCandidates(localSessions);
   // Keep active cloud sessions intact until a later sync, including remote deletions.
   const retainedActive = localSessions.filter((session) => preserveActive(session.id));
   const mergedSessions = [...candidates.filter((session) => !preserveActive(session.id)), ...retainedActive].map((session) => {
@@ -1347,22 +1358,30 @@ async function applyAiSessionData(sessions: NonNullable<SyncPayload['aiSessions'
     // Native SDK threads belong to this device. Reuse the local thread
     // only while it already contains the entire merged transcript.
     const local = localById.get(session.id);
-    const transcriptChanged = local
-      && JSON.stringify(portableMessages(local)) !== JSON.stringify(portableMessages(session));
+    const transcriptChanged = local && !aiSessionTranscriptsEqual(local, session);
     if (transcriptChanged) resetSdkSessions.push(session.id);
-    const { externalSessionId: _remoteThread, ...portable } = session;
+    const { externalSessionId: _remoteThread, ...rest } = session;
+    const placed = !includeLocalOnlyData && local
+      ? { ...rest, scope: local.scope,
+        ...(local.scopeDangling ? { scopeDangling: true } : {}),
+        ...(local.scopeOrigin ? { scopeOrigin: local.scopeOrigin } : {}),
+      }
+      : rest;
     return local?.externalSessionId && !transcriptChanged
-      ? { ...portable, externalSessionId: local.externalSessionId }
-      : portable;
+      ? { ...placed, externalSessionId: local.externalSessionId }
+      : placed;
   });
-  if (!writeSessionsForStorage(mergedSessions)) {
+  const survivingIds = new Set(mergedSessions.map(session => session.id));
+  const removedIds = localSessions.filter(session => !survivingIds.has(session.id)).map(session => session.id);
+  if (!writeSessionsForStorage(mergedSessions, { deletedSessionIds: removedIds, fromSync: !includeLocalOnlyData })) {
     throw new Error('Unable to save downloaded AI chat history');
   }
   cleanupDeletedAIChatSessions(removedIds);
-  await cleanupSdkAgentSessions(resetSdkSessions);
+  const cleanup = cleanupSdkAgentSessions(resetSdkSessions);
   setLatestAISessionsSnapshot(mergedSessions);
   publishAISessionsSnapshot({ ...getAISessionsSnapshot(), sessions: mergedSessions });
   emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
+  await cleanup;
 }
 
 /** Read existing cloud chats before an enabled empty local list can overwrite them. */
@@ -1390,7 +1409,7 @@ export async function setAiSessionsSyncPreference(
         throw new Error('Unable to save the chat sync preference');
       }
       try {
-        await applyAiSessionData(merged.aiSessions ?? [], false);
+        await applyAiSessionData(merged.aiSessions ?? [], false, local.aiSessions);
       } catch (error) {
         if (previous === null) localStorageAdapter.remove(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS);
         else localStorageAdapter.writeString(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS, previous);
@@ -1410,6 +1429,7 @@ async function preparePayloadApply(
   importers: SyncPayloadImporters,
   options: {
     includeLocalOnlyData: boolean;
+    aiSessionBaseline?: AiSessionSyncBaseline;
     applyPluginSidecars?: PluginSyncSidecarApplier;
     currentHosts?: Host[];
   },
@@ -1477,7 +1497,7 @@ async function preparePayloadApply(
     const applyAiSessions = options.includeLocalOnlyData
       || localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled === true;
     if (applyAiSessions && Array.isArray(sanitizedPayload.aiSessions)) {
-      await applyAiSessionData(sanitizedPayload.aiSessions, options.includeLocalOnlyData);
+      await applyAiSessionData(sanitizedPayload.aiSessions, options.includeLocalOnlyData, options.aiSessionBaseline);
     }
 
     // Apply synced settings
@@ -1501,12 +1521,14 @@ export function prepareSyncPayloadApply(
   payload: SyncPayload,
   importers: SyncPayloadImporters,
   options?: {
+    aiSessionBaseline?: AiSessionSyncBaseline;
     applyPluginSidecars?: PluginSyncSidecarApplier;
     currentHosts?: Host[];
   },
 ): Promise<() => Promise<void>> {
   return preparePayloadApply(payload, importers, {
     includeLocalOnlyData: false,
+    aiSessionBaseline: options?.aiSessionBaseline ?? collectLocalAiSessions(),
     applyPluginSidecars: options?.applyPluginSidecars,
     currentHosts: options?.currentHosts,
   });

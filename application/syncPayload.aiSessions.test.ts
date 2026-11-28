@@ -428,6 +428,55 @@ test('cloud restore never resumes a source device SDK thread, and preserves matc
   assert.equal(current.find((s) => s.id === 'new-chat')?.externalSessionId, undefined);
 });
 
+test('applying a completed sync preserves chats created, edited or deleted after capture', async () => {
+  const idb = installFakeIndexedDb();
+  try {
+    const original = ['common', 'deleted-locally', 'changed-locally', 'deleted-remotely'].map(id => ({ ...session(), id }));
+    save(original);
+    snapshots.writeSessionsForStorage(original);
+    const aiSessionBaseline = collectAiSessionsForSync()!;
+    const current = [
+      original[0],
+      { ...original[2], title: 'Changed during sync', titleUpdatedAt: 5, updatedAt: 5 },
+      original[3],
+      { ...session(), id: 'added-locally' },
+    ];
+    save(current);
+    snapshots.writeSessionsForStorage(current, { deletedSessionIds: ['deleted-locally'] });
+    const incoming = [...aiSessionBaseline.slice(0, 2), { ...session(), id: 'added-remotely' }];
+    await applySyncPayload(remotePayload(incoming), { importVaultData: () => undefined }, { aiSessionBaseline });
+    await snapshots.__flushIdbWritesForTests();
+    const expected = ['added-locally', 'added-remotely', 'changed-locally', 'common'];
+    assert.deepEqual(getAISessionsSnapshot().sessions.map(chat => chat.id).sort(), expected);
+    assert.deepEqual(idb.db.dumpStore('sessions').map(s => (s as AISession).id).sort(), expected);
+  } finally {
+    idb.restore();
+  }
+});
+
+test('cloud chats carry a historical scope label but preserve bindings and unchanged native transcripts', async () => {
+  const local = { ...session(), scope: { type: 'terminal' as const, targetId: 'on-this-device', hostIds: ['local-host'] },
+    scopeOrigin: { type: 'workspace' as const, hostIds: ['original-host'] }, externalSessionId: 'native-thread' };
+  save([local]);
+  const incoming = {
+    ...local,
+    scope: { type: 'workspace' as const, targetId: 'on-the-other-device' },
+    scopeLabel: 'Production workspace',
+    scopeDangling: true,
+    updatedAt: 4,
+    messages: local.messages.map(message => ({ ...message, updatedAt: 4 })),
+  };
+  await applySyncPayload(remotePayload([incoming, { ...incoming, id: 'new' }]), { importVaultData: () => undefined });
+  const sessions = getAISessionsSnapshot().sessions;
+  assert.deepEqual(sessions.find(chat => chat.id === 'chat')?.scope, local.scope);
+  assert.equal(sessions.find(chat => chat.id === 'chat')?.externalSessionId, 'native-thread');
+  assert.deepEqual(sessions.find(chat => chat.id === 'new')?.scope, local.scopeOrigin);
+  assert.equal(sessions.find(chat => chat.id === 'new')?.scopeDangling, undefined);
+  assert.equal(sessions.find(chat => chat.id === 'new')?.scopeLabel, incoming.scopeLabel);
+  assert.ok(collectAiSessionsForSync()!.every(chat => !chat.scope.targetId && !chat.scopeDangling));
+  assert.deepEqual(collectAiSessionsForSync()!.find(chat => chat.id === 'chat')?.scope, local.scopeOrigin);
+});
+
 test('changed remote transcript resets the local native SDK thread before continuing', async () => {
   const cleanups: string[] = [];
   Object.assign(window, { netcatty: { aiSdkAgentCleanup: async (id: string) => { cleanups.push(id); return { ok: true }; } } });

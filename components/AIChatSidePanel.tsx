@@ -682,14 +682,15 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     });
   }, [exportSessionsBackup, t]);
 
-  const handleImportSessions = useCallback(() => {
-    void importSessionsBackup?.().then((count) => {
-      if (count <= 0) {
+  const handleImportSessions = useCallback((mode?: import('../application/state/aiSessionsBackup').AiSessionsImportMode) => {
+    void importSessionsBackup?.(mode).then((result) => {
+      if (!result) return;
+      if (Object.values(result).every(count => count === 0)) {
         toast.warning(t('ai.chat.importNone'));
         return;
       }
-      toast.success(t('ai.chat.importDone').replace('{n}', String(count)));
-    });
+      toast.success(t('ai.chat.importSummary', result));
+    }).catch(() => toast.error(t('ai.chat.importFailed')));
   }, [importSessionsBackup, t]);
 
 
@@ -1875,7 +1876,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       let currentSession = currentSessionView ?? null;
       if (isDraftMode) {
         const scope: AISessionScope = { type: scopeType, targetId: scopeTargetId, hostIds: scopeHostIds };
-        const createdSession = createSession(scope, sendAgentId);
+        const createdSession = createSession(scope, sendAgentId, scopeLabel);
         sessionId = createdSession.id;
         currentSession = createdSession;
         if (useDraftAttachments) clearScopeDraft({ keepPendingText: keepPendingAfterSend() });
@@ -2315,62 +2316,6 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     [managerTerminalInfos, workspaces],
   );
 
-  // Clicking any chat in the All Chats tab opens it directly in this panel.
-  // Chats already belonging to this scope switch immediately; past/closed or
-  // other-scope chats attach to this panel transparently before closing the
-  // drawer so users never have to perform a manual two-step rebind.
-  const handleManagerActivate = useCallback(async (sessionId: string) => {
-    const session = sessions.find((item) => item.id === sessionId);
-    if (!session) return;
-    const isAlreadyInScope = Boolean(
-      scopeTargetId
-      && !session.scopeDangling
-      && session.scope.type === scopeType
-      && session.scope.targetId === scopeTargetId,
-    );
-    if (isAlreadyInScope || !scopeTargetId || !rebindSessionScope || scopeType === 'global') {
-      handleSelectSession(sessionId);
-      return;
-    }
-    await stopActiveTurnBeforeScopeRebind(sessionId, {
-      abortControllersRef,
-      streamingSessionIds,
-      stopStreamingForSession,
-    });
-    const destinationHostIds = scopeHostIds && scopeHostIds.length > 0
-      ? [...scopeHostIds]
-      : undefined;
-    rebindSessionScope(sessionId, {
-      type: scopeType,
-      targetId: scopeTargetId,
-      hostIds: destinationHostIds,
-    });
-    syncWorkspaceAnchorsForScopeRebind(
-      sessionId,
-      {
-        type: scopeType,
-        targetId: scopeTargetId,
-        label: '',
-        hostIds: destinationHostIds,
-      },
-      workspaces,
-      onSetWorkspaceAnchorChat,
-    );
-    setShowHistory(false);
-  }, [
-    abortControllersRef,
-    handleSelectSession,
-    onSetWorkspaceAnchorChat,
-    rebindSessionScope,
-    scopeHostIds,
-    scopeTargetId,
-    scopeType,
-    sessions,
-    stopStreamingForSession,
-    streamingSessionIds,
-    workspaces,
-  ]);
-
   const handleManagerFocusScope = useCallback((target: {
     type: 'terminal' | 'workspace';
     targetId: string;
@@ -2404,6 +2349,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       workspaces,
       onSetWorkspaceAnchorChat,
     );
+    if (target.type === scopeType && target.targetId === scopeTargetId) setShowHistory(false);
     const session = sessions.find((item) => item.id === sessionId);
     toast.success(
       t('ai.chat.managerRebindDone')
@@ -2413,7 +2359,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
             ? t('ai.chat.chatsScopeWorkspace')
             : t('ai.chat.chatsScopeTerminal'))),
     );
-  }, [abortControllersRef, onSetWorkspaceAnchorChat, rebindSessionScope, sessions, stopStreamingForSession, streamingSessionIds, t, workspaces]);
+  }, [abortControllersRef, onSetWorkspaceAnchorChat, rebindSessionScope, scopeTargetId, scopeType, sessions, stopStreamingForSession, streamingSessionIds, t, workspaces]);
 
   const handleManagerDelete = useCallback(async (sessionId: string) => {
     if (abortControllersRef.current.has(sessionId) || streamingSessionIds.has(sessionId)) {
@@ -2459,7 +2405,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
             hosts={hosts}
             externalAgents={externalAgents}
             rebindTargets={managerRebindTargets}
-            onSelect={(sessionId) => { void handleManagerActivate(sessionId); }}
+            onSelect={handleSelectSession}
             onFocusScope={onFocusAIScopeTarget ? handleManagerFocusScope : undefined}
             onRebind={handleManagerRebind}
             onRename={handleRenameSession}
@@ -2478,7 +2424,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     hosts,
     externalAgents,
     managerRebindTargets,
-    handleManagerActivate,
+    handleSelectSession,
     handleManagerFocusScope,
     handleManagerRebind,
     handleRenameSession,

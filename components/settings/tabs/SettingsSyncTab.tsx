@@ -8,7 +8,7 @@ import {
   prepareLocalVaultPayloadApply,
 } from "../../../application/syncPayload";
 import { applyProtectedSyncPayload } from "../../../application/localVaultBackups";
-import type { SyncableVaultData } from "../../../application/syncPayload";
+import type { AiSessionSyncBaseline, SyncableVaultData } from "../../../application/syncPayload";
 import { useI18n } from "../../../application/i18n/I18nProvider";
 import { getEffectiveKnownHosts } from "../../../infrastructure/syncHelpers";
 import { CloudSyncSettings } from "../../CloudSyncSettings";
@@ -50,20 +50,20 @@ export default function SettingsSyncTab(props: {
   }, [vault, getEffectivePortForwardingRules]);
 
   const onPrepareMigrationPayload = useCallback(
-    (payload: SyncPayload) =>
+    (payload: SyncPayload, aiSessionBaseline?: AiSessionSyncBaseline) =>
       prepareSyncPayloadApply(payload, {
         importVaultData: importDataFromString,
         importPortForwardingRules,
         onSettingsApplied,
-      }, { currentHosts: vault.hosts }),
+      }, { currentHosts: vault.hosts, aiSessionBaseline }),
     [importDataFromString, importPortForwardingRules, onSettingsApplied, vault.hosts],
   );
 
   const onApplyPayload = useCallback(
-    (payload: SyncPayload) =>
+    (payload: SyncPayload, aiSessionBaseline?: AiSessionSyncBaseline) =>
       applyProtectedSyncPayload({
         buildPreApplyPayload: onBuildLocalPayload,
-        prepareApply: () => onPrepareMigrationPayload(payload),
+        prepareApply: () => onPrepareMigrationPayload(payload, aiSessionBaseline),
         translateProtectiveBackupFailure: (message) =>
           t("cloudSync.localBackups.protectiveBackupFailed", { message }),
       }),
@@ -74,10 +74,11 @@ export default function SettingsSyncTab(props: {
     (
       payload: SyncPayload,
       commitReplica: () => Promise<void>,
+      aiSessionBaseline?: AiSessionSyncBaseline,
     ) => applyProtectedSyncPayload({
       buildPreApplyPayload: onBuildLocalPayload,
       prepareApply: async () => {
-        const applyPreparedPayload = await onPrepareMigrationPayload(payload);
+        const applyPreparedPayload = await onPrepareMigrationPayload(payload, aiSessionBaseline);
         return async () => {
           await applyPreparedPayload();
           await commitReplica();

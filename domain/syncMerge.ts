@@ -36,6 +36,7 @@ import {
 } from './sync';
 import { mergePluginSyncSidecarsThreeWay } from './pluginSyncSidecar';
 import { stripMessageContinuationState, type ForkMessageLike } from './aiSessionFork';
+import type { AISession } from '../infrastructure/ai/types';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -260,6 +261,11 @@ function mergeEntityArrays<T extends { id: string }>(
 // AI session merge (messages are append-only)
 // ---------------------------------------------------------------------------
 
+export function getAiSessionScopeOrigin(session: Pick<AISession, 'scope' | 'scopeOrigin'>): NonNullable<AISession['scopeOrigin']> {
+  const { type, hostIds } = session.scopeOrigin ?? session.scope;
+  return hostIds?.length ? { type, hostIds } : { type };
+}
+
 /** Remove work state that belongs to the source device, keeping local attachment bodies. */
 export function stripAiSessionDeviceState<T extends { messages?: unknown[] }>(session: T): T {
   const messages = Array.isArray(session.messages)
@@ -283,6 +289,11 @@ export function stripAiSessionDeviceState<T extends { messages?: unknown[] }>(se
   // External SDK IDs refer to provider threads/local runtime files on the
   // source device. Fresh receivers must replay the portable history instead.
   delete portableSession.externalSessionId;
+  delete portableSession.scopeDangling;
+  if (portableSession.scope && typeof portableSession.scope === 'object') {
+    portableSession.scope = getAiSessionScopeOrigin(session as T & AISession);
+  }
+  delete portableSession.scopeOrigin;
   return portableSession as T;
 }
 
@@ -316,6 +327,22 @@ export function stripAiSessionPayloadForSync<T extends { messages?: unknown[] }>
   });
 }
 
+/** Message clocks order edits but are not part of a provider's transcript. */
+export function aiSessionTranscriptsEqual(
+  left: { messages?: unknown[] },
+  right: { messages?: unknown[] },
+): boolean {
+  if (left.messages === right.messages) return true;
+  const portable = stripAiSessionPayloadForSync([left, right]).map(session => fingerprint(
+    (session.messages ?? []).map(message => {
+      if (!message || typeof message !== 'object') return message;
+      const { updatedAt: _revision, ...content } = message as Record<string, unknown>;
+      return content;
+    }),
+  ));
+  return portable[0] === portable[1];
+}
+
 function stripAttachmentBlobs(attachments: unknown[]): unknown[] {
   if (!Array.isArray(attachments)) return attachments;
   return attachments.map((attachment) => {
@@ -341,7 +368,18 @@ function stripAttachmentBlobs(attachments: unknown[]): unknown[] {
  * different turns to the same conversation therefore keep both — which is what
  * a plain last-writer-wins merge would silently throw away.
  */
-function mergeAiSessionArrays<T extends { id: string; updatedAt?: number; messages?: Array<{ id?: string; timestamp?: number }> }>(
+type MergeableAiMessage = { id?: string; timestamp?: number; updatedAt?: number; content?: string };
+type MergeableAiSession = {
+  id: string;
+  updatedAt?: number;
+  title?: string;
+  titleUpdatedAt?: number;
+  scopeLabel?: string;
+  historyReset?: { at: number; id: string };
+  messages?: MergeableAiMessage[];
+};
+
+function mergeAiSessionArrays<T extends MergeableAiSession>(
   base: T[],
   local: T[],
   remote: T[],
@@ -391,7 +429,7 @@ function mergeAiSessionArrays<T extends { id: string; updatedAt?: number; messag
       continue;
     }
     if (inBase && inLocal && inRemote) {
-      merged.push(mergeAiSessionPair(localItem as T, remoteItem as T));
+      merged.push(mergeAiSessionPair(localItem as T, remoteItem as T, baseItem));
       if (fingerprint(localItem) !== fingerprint(remoteItem)) {
         modified.local++;
         modified.remote++;
@@ -432,10 +470,18 @@ function mergeAiSessionArrays<T extends { id: string; updatedAt?: number; messag
  * append-only messages). Used when applying a downloaded payload so a
  * cloud snapshot can never drop turns that only exist locally.
  */
-export function mergeAiSessionLists<
-  T extends { id: string; updatedAt?: number; messages?: Array<{ id?: string; timestamp?: number }> },
->(local: T[] | undefined, incoming: T[] | undefined): T[] {
-  return mergeAiSessionArrays<T>([], local ?? [], incoming ?? []).merged;
+export function mergeAiSessionLists<T extends MergeableAiSession>(
+  local: T[] | undefined,
+  incoming: T[] | undefined,
+  baseline: readonly T[] = [],
+): T[] {
+  const merged = new Map((local ?? []).map(session => [session.id, session]));
+  const baseById = new Map(baseline.map(session => [session.id, session]));
+  for (const [id, remote] of new Map((incoming ?? []).map(session => [session.id, session]))) {
+    const current = merged.get(id);
+    merged.set(id, current ? mergeAiSessionPair(current, remote, baseById.get(id)) : remote);
+  }
+  return [...merged.values()];
 }
 
 /** Keep available attachment bodies on this device when the chosen message is metadata-only. */
@@ -514,20 +560,74 @@ function mergeAiMessageOrder(
   return [...ordered];
 }
 
-function mergeAiSessionPair<T extends { id: string; updatedAt?: number; messages?: Array<{ id?: string; timestamp?: number }> }>(
+function chooseAiTitle<T extends MergeableAiSession>(newer: T, older: T, base?: T): T {
+  const newerRevision = newer.titleUpdatedAt ?? 0;
+  const olderRevision = older.titleUpdatedAt ?? 0;
+  if (olderRevision && newerRevision && olderRevision !== newerRevision) {
+    return olderRevision > newerRevision ? older : newer;
+  }
+  if (base?.title !== undefined && newer.title !== older.title) {
+    if (newer.title === base.title) return older;
+    if (older.title === base.title) return newer;
+  }
+  if (olderRevision !== newerRevision) return olderRevision > newerRevision ? older : newer;
+  if (newerRevision > 0 && newer.title !== older.title) {
+    return (older.title ?? '') > (newer.title ?? '') ? older : newer;
+  }
+  return newer;
+}
+
+function mergeAiMessage(
+  earlier: MergeableAiMessage,
+  later: MergeableAiMessage,
+  base?: MergeableAiMessage,
+): MergeableAiMessage {
+  const earlierRevision = earlier.updatedAt;
+  const laterRevision = later.updatedAt;
+  let preferred = later;
+  if (earlierRevision !== undefined && laterRevision !== undefined && earlierRevision !== laterRevision) {
+    preferred = earlierRevision > laterRevision ? earlier : later;
+  } else if (earlier.content !== later.content) {
+    // Legacy replicas did not version messages. A title edit on that replica
+    // must not make its unfinished copy of a reply win.
+    const earlierText = earlier.content ?? '';
+    const laterText = later.content ?? '';
+    if (base && (base.content === earlier.content || base.content === later.content)) {
+      preferred = base.content === later.content ? earlier : later;
+    } else if (earlierText.startsWith(laterText) || laterText.startsWith(earlierText)) {
+      preferred = earlierText.length > laterText.length ? earlier : later;
+    } else if (earlierRevision !== laterRevision) {
+      preferred = earlierRevision === undefined ? later : earlier;
+    } else {
+      preferred = earlierText > laterText ? earlier : later;
+    }
+  } else if ((earlierRevision ?? 0) > (laterRevision ?? 0)) {
+    preferred = earlier;
+  }
+  return retainAvailableAttachments(preferred, preferred === earlier ? later : earlier);
+}
+
+function mergeAiSessionPair<T extends MergeableAiSession>(
   a: T,
   b: T,
+  base?: T,
 ): T {
   const newer = (b.updatedAt ?? 0) > (a.updatedAt ?? 0) ? b : a;
   const older = newer === a ? b : a;
-  const seen = new Map<string, { id?: string; timestamp?: number }>();
-  // Later values replace matching IDs so a completed reply replaces the
-  // earlier streamed copy. Distinct turns remain append-only.
-  for (const session of [older, newer]) {
+  const titleSource = chooseAiTitle(newer, older, base);
+  const resetOrder = (a.historyReset?.at ?? 0) - (b.historyReset?.at ?? 0)
+    || (a.historyReset?.id ?? '').localeCompare(b.historyReset?.id ?? '');
+  const historySource = resetOrder === 0 ? undefined : resetOrder > 0 ? a : b;
+  const baseMessages = new Map(
+    (base?.historyReset?.id === a.historyReset?.id ? base?.messages ?? [] : [])
+      .map(message => [aiMessageKey(message), message]),
+  );
+  const seen = new Map<string, MergeableAiMessage>();
+  for (const session of historySource ? [historySource] : [older, newer]) {
     for (const message of session.messages ?? []) {
       const key = aiMessageKey(message);
       const existing = seen.get(key);
-      seen.set(key, existing ? retainAvailableAttachments(message, existing) : message);
+      seen.set(key, existing ? mergeAiMessage(existing, message, baseMessages.get(key)) : message);
     }
   }
   // Copies that already contain the same turns in different orders need one
@@ -536,14 +636,28 @@ function mergeAiSessionPair<T extends { id: string; updatedAt?: number; messages
     ? [newer, older]
     : JSON.stringify((a.messages ?? []).map(aiMessageKey)) <= JSON.stringify((b.messages ?? []).map(aiMessageKey))
       ? [a, b] : [b, a];
-  const messages = mergeAiMessageOrder(primary.messages ?? [], secondary.messages ?? []).map((key) => seen.get(key)!);
+  const messages = historySource
+    ? [...seen.values()]
+    : mergeAiMessageOrder(primary.messages ?? [], secondary.messages ?? []).map((key) => seen.get(key)!);
   const merged = { ...newer, messages, updatedAt: Math.max(a.updatedAt ?? 0, b.updatedAt ?? 0) } as T & {
     contextCompaction?: { compactedMessageCount: number };
   };
+  if (titleSource.title !== undefined) merged.title = titleSource.title;
+  if (titleSource.titleUpdatedAt !== undefined) merged.titleUpdatedAt = titleSource.titleUpdatedAt;
+  else delete merged.titleUpdatedAt;
+  if (newer.scopeLabel ?? older.scopeLabel) merged.scopeLabel = newer.scopeLabel ?? older.scopeLabel;
+  const compactionSource = (historySource ?? newer) as typeof merged;
+  if (historySource) {
+    merged.historyReset = historySource.historyReset;
+    if (compactionSource.contextCompaction) merged.contextCompaction = compactionSource.contextCompaction;
+    else delete merged.contextCompaction;
+  }
   const count = merged.contextCompaction?.compactedMessageCount;
   if (count && count > 0) {
-    const portablePrefix = (items: typeof messages) => stripAiSessionPayloadForSync([{ messages: items.slice(0, count) }])[0].messages;
-    if (fingerprint(portablePrefix(newer.messages ?? [])) !== fingerprint(portablePrefix(messages))) {
+    if (!aiSessionTranscriptsEqual(
+      { messages: compactionSource.messages?.slice(0, count) },
+      { messages: messages.slice(0, count) },
+    )) {
       delete merged.contextCompaction;
     }
   }

@@ -68,7 +68,7 @@ import { resolveCloseIntent } from '../state/resolveCloseIntent';
 import { resolveSnippetsShortcutIntent } from '../state/resolveSnippetsShortcutIntent';
 import { isPrimaryModifierWBinding, resolveWindowCommandCloseIntent } from '../state/windowCommandClose';
 import type { SyncPayload } from '../../domain/sync';
-import { prepareSyncPayloadApply, buildLocalVaultPayloadAsync, hasMeaningfulSyncData } from '../syncPayload';
+import { prepareSyncPayloadApply, buildLocalVaultPayloadAsync, hasMeaningfulSyncData, type AiSessionSyncBaseline } from '../syncPayload';
 import {
   applyProtectedSyncPayload,
   ensureVersionChangeBackup,
@@ -514,7 +514,7 @@ export function AppSideEffects() {
   // on unrelated App-level state changes (which would churn the debounced
   // auto-sync useEffect dep chain).
   const handleApplySyncPayload = useCallback(
-    (payload: SyncPayload) =>
+    (payload: SyncPayload, aiSessionBaseline?: AiSessionSyncBaseline) =>
       applyProtectedSyncPayload({
         buildPreApplyPayload: () => buildCurrentSyncPayload(),
         prepareApply: () =>
@@ -522,7 +522,7 @@ export function AppSideEffects() {
             importVaultData: importDataFromString,
             importPortForwardingRules,
             onSettingsApplied: settings.rehydrateAllFromStorage,
-          }, { currentHosts: hosts }),
+          }, { currentHosts: hosts, aiSessionBaseline }),
         translateProtectiveBackupFailure: (message) =>
           t('cloudSync.localBackups.protectiveBackupFailed', { message }),
       }),
@@ -537,7 +537,7 @@ export function AppSideEffects() {
   );
 
   const handleApplyConvergentSyncPayload = useCallback(
-    (payload: SyncPayload, commitReplica: () => Promise<void>) =>
+    (payload: SyncPayload, commitReplica: () => Promise<void>, aiSessionBaseline?: AiSessionSyncBaseline) =>
       applyProtectedSyncPayload({
         buildPreApplyPayload: () => buildCurrentSyncPayload(),
         prepareApply: async () => {
@@ -546,7 +546,7 @@ export function AppSideEffects() {
             importVaultData: importDataFromString,
             importPortForwardingRules,
             onSettingsApplied: settings.rehydrateAllFromStorage,
-          }, { currentHosts: hosts });
+          }, { currentHosts: hosts, aiSessionBaseline });
           return async () => {
             await applyPreparedPayload();
             await commitReplica();

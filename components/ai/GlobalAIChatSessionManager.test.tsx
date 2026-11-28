@@ -222,7 +222,7 @@ test("manager lists chats from every scope with host context and no detached jar
   }
 });
 
-test("clicking any row opens it directly; overflow menu handles export", async () => {
+test("viewing history does not move it until Continue here is selected", async () => {
   const dom = installDomEnvironment();
   const restoreGlobals = installRadixGlobals(dom);
   try {
@@ -234,15 +234,30 @@ test("clicking any row opens it directly; overflow menu handles export", async (
     ];
     const selected: string[] = [];
     const exported: string[] = [];
+    const moved: string[] = [];
     props.onSelect = (id) => selected.push(id);
     props.onExport = (id) => exported.push(id);
+    props.onRebind = (id) => moved.push(id);
     const renderer = await renderManager(dom, props);
 
-    for (const id of ["here", "other", "gone"]) {
-      const row = rows(renderer).find((el) => el.dataset.sessionId === id)!;
-      await dispatchDomEvent(row, new dom.window.MouseEvent("click", { bubbles: true }));
-    }
-    assert.deepEqual(selected, ["here", "other", "gone"], "every row is 1-click openable");
+    assert.deepEqual(
+      Array.from(renderer.container.querySelectorAll('[role="columnheader"]')).slice(0, 4).map(el => el.textContent),
+      ['Chat', 'Agent', 'Workspace / terminal', 'Last message'],
+    );
+    const clickRow = (id: string) => dispatchDomEvent(
+      rows(renderer).find(el => el.dataset.sessionId === id)!,
+      new dom.window.MouseEvent("click", { bubbles: true }),
+    );
+    await clickRow('here');
+    await clickRow('gone');
+    const preview = renderer.container.querySelector('[data-section="ai-manager-preview"]')!;
+    assert.match(preview.textContent ?? '', /hello/);
+    assert.deepEqual(selected, ['here']);
+    assert.deepEqual(moved, []);
+    const continueHere = Array.from(preview.querySelectorAll('button'))
+      .find(button => button.textContent === t('ai.chat.managerContinueHere'))!;
+    await dispatchDomEvent(continueHere, new dom.window.MouseEvent("click", { bubbles: true }));
+    assert.deepEqual(moved, ['gone']);
 
     await clickMenuItemInRow(dom, renderer, "other", t("ai.chat.managerExportOne"));
     assert.deepEqual(exported, ["other"]);
@@ -254,7 +269,7 @@ test("clicking any row opens it directly; overflow menu handles export", async (
     )!;
     await dispatchDomEvent(menuTrigger, new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     await dispatchDomEvent(menuTrigger, new dom.window.KeyboardEvent("keydown", { key: " ", bubbles: true }));
-    assert.deepEqual(selected, ["here", "other", "gone"], "nested button keydown does not activate the row");
+    assert.deepEqual(selected, ["here"], "nested button keydown does not activate the row");
   } finally {
     restoreGlobals();
     dom.cleanup();
@@ -486,7 +501,7 @@ test("history drawer hosts the manager behind a current/all toggle", async () =>
   }
 });
 
-test("clicking an active-elsewhere chat jumps to its open panel instead of moving it; past chats still open directly", async () => {
+test("active chats focus their owning panel and past chats open the history preview", async () => {
   const dom = installDomEnvironment();
   try {
     const props = baseProps();
@@ -517,13 +532,14 @@ test("clicking an active-elsewhere chat jumps to its open panel instead of movin
       { type: "terminal", targetId: "t-2" },
       { type: "workspace", targetId: "w-1" },
     ]);
-    assert.deepEqual(selected, ["past-chat"]);
+    assert.deepEqual(selected, []);
+    assert.ok(renderer.container.querySelector('[data-section="ai-manager-preview"]'));
   } finally {
     dom.cleanup();
   }
 });
 
-test("clicking an active-elsewhere chat falls back to opening locally when focusing the target panel fails", async () => {
+test("a failed jump to the owning panel falls back to history preview", async () => {
   const dom = installDomEnvironment();
   try {
     const props = baseProps();
@@ -537,7 +553,8 @@ test("clicking an active-elsewhere chat falls back to opening locally when focus
     const renderer = await renderManager(dom, props);
 
     await dispatchDomEvent(rows(renderer)[0], new dom.window.MouseEvent("click", { bubbles: true }));
-    assert.deepEqual(selected, ["elsewhere-term"]);
+    assert.deepEqual(selected, []);
+    assert.ok(renderer.container.querySelector('[data-section="ai-manager-preview"]'));
   } finally {
     dom.cleanup();
   }

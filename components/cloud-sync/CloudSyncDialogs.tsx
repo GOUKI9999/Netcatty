@@ -4,6 +4,7 @@ import type { CloudProvider, ConflictResolution, SyncPayload, SyncResult, WebDAV
 import type { ShrinkFinding } from '../../domain/syncGuards';
 import { stripSyncPayloadEncryptedCredentials } from '../../domain/credentials';
 import type { useCloudSync } from '../../application/state/useCloudSync';
+import type { AiSessionSyncBaseline } from '../../application/syncPayload';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
@@ -131,10 +132,11 @@ interface CloudSyncDialogsProps {
   showClearLocalDialog: boolean;
   setShowClearLocalDialog: BooleanSetter;
   onBuildPayload: () => SyncPayload | Promise<SyncPayload>;
-  onApplyPayload: (payload: SyncPayload) => void | Promise<void>;
+  onApplyPayload: (payload: SyncPayload, aiSessionBaseline?: AiSessionSyncBaseline) => void | Promise<void>;
   onApplyConvergentPayload: (
     payload: SyncPayload,
     commitReplica: () => Promise<void>,
+    aiSessionBaseline?: AiSessionSyncBaseline,
   ) => Promise<void>;
   onClearLocalData?: () => void;
   ensureSyncablePayload: (payload: SyncPayload) => boolean;
@@ -729,8 +731,10 @@ export const CloudSyncDialogs: React.FC<CloudSyncDialogsProps> = ({
                                     }
 
                                     if (payloadForReencrypt) {
+                                        const aiSessionBaseline = payloadForReencrypt.aiSessions ?? [];
                                         await sync.syncNow(payloadForReencrypt, {
-                                            applyConvergentPayload: onApplyConvergentPayload,
+                                            applyConvergentPayload: (result, commitReplica) =>
+                                                onApplyConvergentPayload(result, commitReplica, aiSessionBaseline),
                                         });
                                     }
 
@@ -893,7 +897,8 @@ export const CloudSyncDialogs: React.FC<CloudSyncDialogsProps> = ({
                                     try {
                                         const results = await sync.syncNow(localPayload, {
                                             overrideShrink: true,
-                                            applyConvergentPayload: onApplyConvergentPayload,
+                                            applyConvergentPayload: (result, commitReplica) =>
+                                                onApplyConvergentPayload(result, commitReplica, localPayload.aiSessions ?? []),
                                         });
 
                                         // Apply any merged payload BEFORE clearing the banner. If a merge happened
@@ -903,7 +908,7 @@ export const CloudSyncDialogs: React.FC<CloudSyncDialogsProps> = ({
                                         for (const result of results.values()) {
                                             if (result.mergedPayload && !result.mergedPayloadApplied) {
                                                 const portableMerged = stripSyncPayloadEncryptedCredentials(result.mergedPayload);
-                                                await Promise.resolve(onApplyPayload(portableMerged));
+                                                await Promise.resolve(onApplyPayload(portableMerged, localPayload.aiSessions ?? []));
                                                 if (result.remoteFile) {
                                                     await sync.commitRemoteInspection(result.provider, result.remoteFile, portableMerged, {
                                                         recordDownload: true,

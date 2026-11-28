@@ -13,6 +13,7 @@ import {
     ShieldCheck,
 } from 'lucide-react';
 import { useCloudSync } from '../application/state/useCloudSync';
+import { collectAiSessionsForSync, type AiSessionSyncBaseline } from '../application/syncPayload';
 import {
     withRestoreBarrier,
 } from '../application/localVaultBackups';
@@ -51,11 +52,12 @@ import { CloudSyncDashboardTabs } from './cloud-sync/CloudSyncDashboardTabs';
 interface SyncDashboardProps {
     onBuildPayload: () => SyncPayload | Promise<SyncPayload>;
     onBuildLocalPayload: () => SyncPayload;
-    onPrepareMigrationPayload: (payload: SyncPayload) => Promise<() => Promise<void>>;
-    onApplyPayload: (payload: SyncPayload) => void | Promise<void>;
+    onPrepareMigrationPayload: (payload: SyncPayload, aiSessionBaseline?: AiSessionSyncBaseline) => Promise<() => Promise<void>>;
+    onApplyPayload: (payload: SyncPayload, aiSessionBaseline?: AiSessionSyncBaseline) => void | Promise<void>;
     onApplyConvergentPayload: (
         payload: SyncPayload,
         commitReplica: () => Promise<void>,
+        aiSessionBaseline?: AiSessionSyncBaseline,
     ) => Promise<void>;
     onApplyLocalPayload?: (payload: SyncPayload) => void | Promise<void>;
     onClearLocalData?: () => void;
@@ -368,10 +370,11 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                 toast.success(t('cloudSync.convergent.conflict.resolved'));
                 return;
             }
+            const aiSessionBaseline = collectAiSessionsForSync() ?? [];
             const { results } = await sync.resolveConvergentConflict(
                 addressKey,
                 candidateDot,
-                onApplyConvergentPayload,
+                (result, commitReplica) => onApplyConvergentPayload(result, commitReplica, aiSessionBaseline),
             );
             const failed = [...results.values()].find((result) => !result.success);
             if (failed) throw new Error(failed.error || t('sync.autoSync.syncFailed'));
@@ -388,6 +391,7 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
         setConvergentBusy(true);
         setConvergentError(null);
         try {
+            let aiSessionBaseline: AiSessionSyncBaseline = [];
             const results = await sync.downgradeConvergentSync(
                 true,
                 async () => {
@@ -395,9 +399,10 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                     if (!ensureSyncablePayload(localPayload)) {
                         throw new Error(t('sync.credentialsUnavailable'));
                     }
+                    aiSessionBaseline = localPayload.aiSessions ?? [];
                     return localPayload;
                 },
-                onApplyConvergentPayload,
+                (result, commitReplica) => onApplyConvergentPayload(result, commitReplica, aiSessionBaseline),
             );
             const failed = [...results.values()].find((result) => !result.success);
             if (failed) throw new Error(failed.error || t('sync.autoSync.syncFailed'));
@@ -689,7 +694,8 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
             const payload = await onBuildPayload();
             if (!ensureSyncablePayload(payload)) return;
             const result = await sync.syncToProvider(provider, payload, {
-                applyConvergentPayload: onApplyConvergentPayload,
+                applyConvergentPayload: (result, commitReplica) =>
+                    onApplyConvergentPayload(result, commitReplica, payload.aiSessions ?? []),
             });
 
             // Convergent sync fans out to every provider. Even if the
@@ -697,7 +703,7 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
             // joined replica that must be applied before reporting the error.
             if (result.mergedPayload && !result.mergedPayloadApplied && onApplyPayload) {
                 const portableMerged = stripSyncPayloadEncryptedCredentials(result.mergedPayload);
-                await Promise.resolve(onApplyPayload(portableMerged));
+                await Promise.resolve(onApplyPayload(portableMerged, payload.aiSessions ?? []));
                 if (result.remoteFile) {
                     await sync.commitRemoteInspection(result.provider, result.remoteFile, portableMerged, {
                         recordDownload: true,
@@ -720,6 +726,7 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
     // Resolve conflict
     const handleResolveConflict = async (resolution: 'USE_LOCAL' | 'USE_REMOTE') => {
         try {
+            const aiSessionBaseline = collectAiSessionsForSync() ?? [];
             const remoteResult = await sync.resolveConflict(resolution);
             if (remoteResult && resolution === 'USE_REMOTE') {
                 // USE_REMOTE applies cloud data over local — same data-loss
@@ -727,7 +734,7 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                 // every other window the same way.
                 const portableRemote = stripSyncPayloadEncryptedCredentials(remoteResult.payload);
                 await withRestoreBarrier(async () => {
-                    await Promise.resolve(onApplyPayload(portableRemote));
+                    await Promise.resolve(onApplyPayload(portableRemote, aiSessionBaseline));
                 });
                 await sync.commitRemoteInspection(
                     remoteResult.provider,
@@ -760,7 +767,8 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                     results = await sync.syncNow(localPayload, {
                         overrideShrink: true,
                         conflictActionOverride: 'upload-local',
-                        applyConvergentPayload: onApplyConvergentPayload,
+                        applyConvergentPayload: (result, commitReplica) =>
+                            onApplyConvergentPayload(result, commitReplica, localPayload.aiSessions ?? []),
                     });
                 });
 
@@ -770,7 +778,7 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                     for (const result of (results as Map<CloudProvider, SyncResult>).values()) {
                         if (result.mergedPayload && !result.mergedPayloadApplied) {
                             const portableMerged = stripSyncPayloadEncryptedCredentials(result.mergedPayload);
-                            await Promise.resolve(onApplyPayload(portableMerged));
+                            await Promise.resolve(onApplyPayload(portableMerged, localPayload.aiSessions ?? []));
                             if (result.remoteFile) {
                                 await sync.commitRemoteInspection(result.provider, result.remoteFile, portableMerged, {
                                     recordDownload: true,
@@ -851,7 +859,7 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
         // snapshot" op — same shape as a local backup restore, same
         // cross-window race to block.
         await withRestoreBarrier(async () => {
-            await Promise.resolve(onApplyPayload(historyPreview.payload));
+            await Promise.resolve(onApplyPayload(historyPreview.payload, collectAiSessionsForSync() ?? []));
         });
         toast.success(t('cloudSync.revisionHistory.restored'));
         setShowHistoryModal(false);
@@ -1063,11 +1071,12 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
 interface CloudSyncSettingsProps {
     onBuildPayload: () => SyncPayload | Promise<SyncPayload>;
     onBuildLocalPayload: () => SyncPayload;
-    onPrepareMigrationPayload: (payload: SyncPayload) => Promise<() => Promise<void>>;
-    onApplyPayload: (payload: SyncPayload) => void | Promise<void>;
+    onPrepareMigrationPayload: (payload: SyncPayload, aiSessionBaseline?: AiSessionSyncBaseline) => Promise<() => Promise<void>>;
+    onApplyPayload: (payload: SyncPayload, aiSessionBaseline?: AiSessionSyncBaseline) => void | Promise<void>;
     onApplyConvergentPayload: (
         payload: SyncPayload,
         commitReplica: () => Promise<void>,
+        aiSessionBaseline?: AiSessionSyncBaseline,
     ) => Promise<void>;
     onApplyLocalPayload?: (payload: SyncPayload) => void | Promise<void>;
     onClearLocalData?: () => void;

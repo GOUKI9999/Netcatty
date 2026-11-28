@@ -58,8 +58,8 @@ export interface GlobalManagerRow {
    * Clicking the row jumps to the owning open panel when active elsewhere, or
    * opens the chat in the viewing panel directly when in scope or historical.
    */
-  canActivate: boolean;
   messageCount: number;
+  lastMessageAt: number;
 }
 
 export interface BuildGlobalManagerRowsInput {
@@ -90,6 +90,16 @@ function resolveHistoricalHostLabel(
   if (names.length === 0) return '';
   if (names.length <= 2) return names.join(', ');
   return `${names[0]}, ${names[1]} +${names.length - 2}`;
+}
+
+function getLastMessageAt(session: AISession): number {
+  for (let index = session.messages.length - 1; index >= 0; index--) {
+    const message = session.messages[index];
+    if ((message.role === 'user' || message.role === 'assistant') && Number.isFinite(message.timestamp)) {
+      return message.timestamp;
+    }
+  }
+  return Number.isFinite(session.createdAt) ? session.createdAt : session.updatedAt;
 }
 
 export function buildGlobalManagerRows(input: BuildGlobalManagerRowsInput): GlobalManagerRow[] {
@@ -168,7 +178,7 @@ export function buildGlobalManagerRows(input: BuildGlobalManagerRowsInput): Glob
           scopeLabel = title;
           isDangling = false;
         } else {
-          scopeLabel = resolveHistoricalHostLabel(session.scope.hostIds, hostNamesById);
+          scopeLabel = session.scopeLabel || resolveHistoricalHostLabel(session.scope.hostIds, hostNamesById);
           isDangling = true;
         }
       } else if (session.scope.type === 'terminal') {
@@ -177,7 +187,7 @@ export function buildGlobalManagerRows(input: BuildGlobalManagerRowsInput): Glob
           scopeLabel = terminal.label || terminal.hostname || t('ai.chat.chatsScopeTerminal');
           isDangling = false;
         } else {
-          scopeLabel = resolveHistoricalHostLabel(session.scope.hostIds, hostNamesById);
+          scopeLabel = session.scopeLabel || resolveHistoricalHostLabel(session.scope.hostIds, hostNamesById);
           isDangling = true;
         }
       } else {
@@ -206,12 +216,11 @@ export function buildGlobalManagerRows(input: BuildGlobalManagerRowsInput): Glob
         isCurrentActive,
         isActiveElsewhere,
         activeElsewhereTarget,
-        canActivate: Boolean(isCurrentView || currentScopeTargetId || isActiveElsewhere),
         messageCount: session.messages.length,
+        lastMessageAt: getLastMessageAt(session),
       } satisfies GlobalManagerRow;
     })
-    // Newest first; the filter helpers preserve this order.
-    .sort((a, b) => b.session.updatedAt - a.session.updatedAt);
+    .sort((a, b) => b.lastMessageAt - a.lastMessageAt || a.session.id.localeCompare(b.session.id));
 }
 
 export interface GlobalManagerFilter {
